@@ -110,7 +110,7 @@ class Widget:
         self.header.pack(fill="x", padx=11, pady=(5, 4))
         self._agg_dot = tk.Label(self.header, text="●", bg=_BG, fg=_DIMMER, font=self._f_dot)
         self._agg_dot.pack(side="left")
-        self._title = tk.Label(self.header, text=" vibecoding", bg=_BG, fg=_HEADER,
+        self._title = tk.Label(self.header, text=" vibesignal", bg=_BG, fg=_HEADER,
                                font=self._f_title)
         self._title.pack(side="left")
         self._count = tk.Label(self.header, text="", bg=_BG, fg=_DIMMER, font=self._f_dim)

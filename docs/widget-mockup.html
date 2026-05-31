@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vibesignal widget mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #ffffff; }
+  /* The screenshot is clipped to #stage, so its padding + gradient is the frame. */
+  #stage {
+    display: inline-flex;
+    align-items: center;
+    gap: 60px;
+    padding: 46px 52px;
+    background: linear-gradient(135deg, #eef1f6 0%, #e2e7f0 100%);
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 15px; }
+  .cap { font-size: 13px; color: #5b626d; font-weight: 500; letter-spacing: .2px; }
+  .cap b { color: #272b31; }
+
+  /* ---- widget card (faithful to vibesignal/widget.py) ---- */
+  .card {
+    width: 300px;
+    border-radius: 11px;
+    overflow: hidden;
+    border: 1px solid #c9ced8;
+    box-shadow: 0 14px 32px rgba(30, 38, 55, .18), 0 2px 6px rgba(30, 38, 55, .10);
+  }
+  .card.alarm {
+    border-color: #dc2626;
+    box-shadow: 0 14px 36px rgba(220, 38, 38, .30), 0 2px 6px rgba(220, 38, 38, .16);
+  }
+
+  .hdr { display: flex; align-items: center; gap: 6px; padding: 7px 13px; background: #e9ecf1; }
+  .card.alarm .hdr { background: #dc2626; }
+  .dot { font-size: 13px; line-height: 1; color: #2563eb; }      /* calm aggregate = done (blue) */
+  .card.alarm .dot { color: #ffffff; }
+  .ttl { font-size: 13px; font-weight: 700; color: #2b3038; }
+  .card.alarm .ttl { color: #ffffff; }
+  .cnt { margin-left: auto; font-size: 11px; color: #959ba4; }
+  .card.alarm .cnt { color: #ffffff; }
+
+  .rule { height: 1px; background: #d6dae1; }
+  .card.alarm .rule { background: #dc2626; }
+
+  .body { padding: 7px 13px 10px; background: #e9ecf1; }
+  .card.alarm .body { background: #fdecec; }
+
+  .row { display: grid; grid-template-columns: 4px 1fr 52px 58px 46px; align-items: center; gap: 9px; padding: 3px 0; }
+  .bar { width: 4px; height: 15px; border-radius: 2px; }
+  .proj { font-size: 13px; color: #272b31; }
+  .agent { font-size: 11px; color: #6b7280; }
+  .state { font-size: 11px; }
+  .age { font-size: 11px; color: #959ba4; text-align: right; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <div class="col">
+    <div class="card">
+      <div class="hdr"><span class="dot">&#9679;</span><span class="ttl">vibesignal</span><span class="cnt">3</span></div>
+      <div class="rule"></div>
+      <div class="body">
+        <div class="row"><div class="bar" style="background:#16a34a"></div><div class="proj">pyod</div><div class="agent">claude</div><div class="state" style="color:#16a34a">working</div><div class="age">&mdash;</div></div>
+        <div class="row"><div class="bar" style="background:#2563eb"></div><div class="proj">iet-paper</div><div class="agent">codex</div><div class="state" style="color:#2563eb">done</div><div class="age">3s</div></div>
+        <div class="row"><div class="bar" style="background:#16a34a"></div><div class="proj">random</div><div class="agent">claude</div><div class="state" style="color:#16a34a">working</div><div class="age">&mdash;</div></div>
+      </div>
+    </div>
+    <div class="cap"><b>calm</b> &middot; agents working, nothing needs you</div>
+  </div>
+
+  <div class="col">
+    <div class="card alarm">
+      <div class="hdr"><span class="dot">&#9679;</span><span class="ttl">vibesignal</span><span class="cnt">4</span></div>
+      <div class="rule"></div>
+      <div class="body">
+        <div class="row"><div class="bar" style="background:#dc2626"></div><div class="proj">aegis</div><div class="agent">claude</div><div class="state" style="color:#dc2626">blocked</div><div class="age">1m12s</div></div>
+        <div class="row"><div class="bar" style="background:#dc2626"></div><div class="proj">agent-audit</div><div class="agent">codex</div><div class="state" style="color:#dc2626">blocked</div><div class="age">8s</div></div>
+        <div class="row"><div class="bar" style="background:#2563eb"></div><div class="proj">iet-paper</div><div class="agent">claude</div><div class="state" style="color:#2563eb">done</div><div class="age">3s</div></div>
+        <div class="row"><div class="bar" style="background:#16a34a"></div><div class="proj">random</div><div class="agent">claude</div><div class="state" style="color:#16a34a">working</div><div class="age">&mdash;</div></div>
+      </div>
+    </div>
+    <div class="cap"><b style="color:#dc2626">blocked</b> &middot; one session waits &rarr; the panel turns red</div>
+  </div>
+
+</div>
+</body>
+</html>

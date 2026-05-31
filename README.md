@@ -4,12 +4,17 @@
 
 **A daemon-free physical status light for AI coding agents (Claude Code, Codex)**
 
+[![PyPI](https://img.shields.io/pypi/v/vibesignal.svg)](https://pypi.org/project/vibesignal/)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#whats-next)
 [![GitHub Stars](https://img.shields.io/github/stars/yzhao062/vibesignal?style=social)](https://github.com/yzhao062/vibesignal)
 
 [Install](#install) · [macOS Quickstart](#macos-quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
+
+<br>
+
+<img src="https://raw.githubusercontent.com/yzhao062/vibesignal/main/docs/widget-mockup.png" alt="vibesignal floating widget: a calm grey panel while agents work, turning red the moment a session blocks for your input" width="760">
 
 </div>
 
@@ -31,37 +36,40 @@
 
 ## Install
 
-> [!IMPORTANT]
-> Pre-release: install from GitHub for now. `pip install vibesignal` becomes the canonical form once the project lands on PyPI.
+```bash
+pip install vibesignal
+```
 
-**macOS** (install the `macos` extra for accurate Dock-aware widget placement):
+On macOS, add the `macos` extra for accurate Dock-aware widget placement:
 
 ```bash
-pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
+pip install 'vibesignal[macos]'
+```
 
-# One-click launcher (Spotlight, Dock):
+Then wire autostart for your OS.
+
+**macOS** (one-click launcher in Spotlight and the Dock, plus login autostart):
+
+```bash
 vibesignal install-launcher
-
-# Login autostart:
 vibesignal install-autostart
 ```
 
-**Windows:**
+**Windows**: put a shortcut to `pythonw -m vibesignal widget` in the Startup folder (Win+R, type `shell:startup`, drop the shortcut there).
 
-```powershell
-pip install git+https://github.com/yzhao062/vibesignal.git
+**Linux**: add a `.desktop` entry under `~/.config/autostart/` that runs `vibesignal widget`.
 
-# Autostart: put a shortcut to `pythonw -m vibesignal widget` in the Startup folder
-# (Win+R, type shell:startup, drop the shortcut there).
-```
-
-**Linux:**
+<details>
+<summary>Install the latest unreleased build from GitHub</summary>
 
 ```bash
-pip install git+https://github.com/yzhao062/vibesignal.git
+pip install 'vibesignal @ git+https://github.com/yzhao062/vibesignal.git'
 
-# Autostart: add a .desktop entry under ~/.config/autostart/ that runs `vibesignal widget`.
+# with the macOS extra:
+pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
 ```
+
+</details>
 
 After install, [configure your agents](#configure-agents) to fire the hooks.
 
@@ -71,7 +79,7 @@ First-run walk-through on a Mac:
 
 ```bash
 # 1. Install (with macos extra for accurate Dock-aware placement)
-pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
+pip install 'vibesignal[macos]'
 
 # 2. Wire Claude Code hooks (one-time, user level)
 #    Merge hooks/claude-settings.snippet.json into ~/.claude/settings.json
@@ -308,9 +316,10 @@ vibesignal/
 
 ## What's Next
 
-- **PyPI release** so `pip install vibesignal` works as the canonical install path
+> [!NOTE]
+> Shipped since the last release: PyPI packaging (`pip install vibesignal`) and a GitHub Actions CI matrix (Windows / macOS / Linux, Python 3.11 to 3.13).
+
 - **Homebrew tap** at `yzhao062/homebrew-tap` for `brew install yzhao062/tap/vibesignal`
-- **GitHub Actions CI** matrix on Windows, macOS, Linux against Python 3.11 / 3.12 / 3.13
 - **Multi-LED strip** support: a BlinkStick Strip with one cell per session (the store already keys by session; needs a `session -> cell` map in `resolve.py`)
 - **Daemon mode (opt-in)** for blinking patterns and auto-off after idle, at the cost of a service to keep alive
 
