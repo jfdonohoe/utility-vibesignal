@@ -61,24 +61,21 @@ The [Quickstart](#quickstart) below wires the one-click launcher and login autos
 
 ## Quickstart
 
-Install, wire the Claude Code hooks once (see [Configure Agents](#configure-agents)), then run the two install commands for your OS.
+Only the install line differs by OS; the setup commands are the same. Wire the Claude Code hooks once (see [Configure Agents](#configure-agents)), then:
 
-**macOS:**
+**1. Install** (macOS adds the `macos` extra for accurate Dock-aware widget placement):
 
 ```bash
-pip install 'vibesignal[macos]'   # macos extra: accurate Dock-aware widget placement
-vibesignal install-launcher       # Spotlight-able .app, draggable to the Dock
-vibesignal install-autostart      # starts the widget now and at every login
-vibesignal status                 # verify: active sessions + resolved color
+pip install 'vibesignal[macos]'   # macOS
+pip install vibesignal            # Windows
 ```
 
-**Windows:**
+**2. Set up** (identical on macOS and Windows):
 
-```powershell
-pip install vibesignal
-vibesignal install-launcher       # Start menu (type 'VibeSignal') + Desktop shortcut
-vibesignal install-autostart      # starts the widget now and at every login
-vibesignal status                 # verify: active sessions + resolved color
+```bash
+vibesignal install-launcher    # macOS: Spotlight-able .app; Windows: Start menu + Desktop shortcut
+vibesignal install-autostart   # starts the widget now and at every login
+vibesignal status              # verify: active sessions + resolved color
 ```
 
 After `install-autostart`, a small panel appears in the bottom-left of your screen. When any session blocks for permission, the panel turns red and shows which session.
