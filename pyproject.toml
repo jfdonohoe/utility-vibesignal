@@ -1,0 +1,53 @@
+[project]
+name = "vibesignal"
+version = "0.1.0"
+description = "Physical status light for coding agents (Claude Code / Codex) via busylight"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Yue Zhao", email = "yzhao010@usc.edu" }]
+keywords = [
+    "claude-code", "codex", "ai-agent", "status-light", "busylight",
+    "tkinter", "macos", "windows", "linux", "developer-tools",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: System :: Monitoring",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "busylight-core>=2.3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "build>=1.0", "twine>=5.0"]
+macos = ["pyobjc-framework-Cocoa>=10"]
+
+[project.scripts]
+vibesignal = "vibesignal.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/yzhao062/vibesignal"
+Repository = "https://github.com/yzhao062/vibesignal"
+Issues = "https://github.com/yzhao062/vibesignal/issues"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vibesignal"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
