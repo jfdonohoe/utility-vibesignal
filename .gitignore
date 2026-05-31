@@ -5,6 +5,14 @@ __pycache__/
 build/
 dist/
 
+# anywhere-agents bootstrap artifacts (personal agent config; not tracked in this public repo)
 .agent-config/
-
+agent-config.yaml
 agent-config.local.yaml
+AGENTS.md
+CLAUDE.md
+agents/
+.claude/
+
+# IDE
+.idea/
