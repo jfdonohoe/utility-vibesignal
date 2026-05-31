@@ -1,14 +1,18 @@
-"""macOS one-click launcher and LaunchAgent autostart helpers.
+"""One-click launcher and login-autostart helpers for the widget.
 
-Generates a small AppleScript .app bundle in ``~/Applications/`` via the
-stock ``osacompile`` (no new package dependency) and writes a LaunchAgent
-plist that re-launches the widget at login. Both pin the absolute path of
-the ``vibesignal`` script that owns this install, so a later
-re-install from a different env can re-pin cleanly via the same commands.
+macOS: compiles a small AppleScript ``.app`` into ``~/Applications/`` via the
+stock ``osacompile`` and writes a LaunchAgent plist that re-launches the widget
+at login. Windows: writes ``.lnk`` shortcuts through the stock PowerShell
+``WScript.Shell`` COM object -- Start Menu + Desktop for an on-demand launcher,
+and the Startup folder for login autostart. Neither path adds a package
+dependency; both shell out to tools that ship with the OS.
 
-macOS only by design. The helpers refuse on other platforms because their
-guts (``osacompile``, ``launchctl bootstrap``, ``~/Library/LaunchAgents``)
-do not have equivalents that translate one-for-one.
+The widget command is pinned to the absolute interpreter of the env that runs
+the install command, so a re-install from a freshly switched env re-pins
+cleanly. On Windows the shortcut runs ``pythonw -m vibesignal widget`` so there
+is no console window. Linux has no single conventional autostart target, so the
+helpers refuse there; ``vibesignal widget &`` plus a ``~/.config/autostart/``
+``.desktop`` entry is the documented path.
 """
 
 from __future__ import annotations
@@ -24,11 +28,11 @@ from pathlib import Path
 
 LAUNCH_AGENT_LABEL = "io.github.yzhao062.vibesignal"
 APP_NAME = "VibeSignal.app"
+SHORTCUT_NAME = "VibeSignal.lnk"
 
 # Console-script filenames pip can produce. POSIX wheels create a bare
 # `vibesignal`; Windows wheels add a `.exe` launcher. Listing both keeps the
-# resolver correct even if `_check_darwin()` is later relaxed and the install
-# commands grow Windows variants.
+# resolver correct across platforms.
 _SCRIPT_NAMES = ("vibesignal", "vibesignal.exe")
 
 
@@ -37,6 +41,16 @@ def _check_darwin() -> None:
         raise SystemExit(
             "vibesignal installer: only macOS is supported here; "
             f"current platform is {sys.platform!r}."
+        )
+
+
+def _check_supported() -> None:
+    """Guard for non-macOS/non-Windows platforms (Linux, etc.)."""
+    if sys.platform not in ("darwin", "win32"):
+        raise SystemExit(
+            "vibesignal installer: install-launcher / install-autostart support "
+            f"macOS and Windows; current platform is {sys.platform!r}. On Linux, "
+            "run `vibesignal widget &` and add a ~/.config/autostart/ .desktop entry."
         )
 
 
@@ -77,6 +91,10 @@ def vibesignal_args() -> list[str]:
             return [str(sibling)]
     return [str(Path(sys.executable).resolve()), "-m", "vibesignal"]
 
+
+# --------------------------------------------------------------------------- #
+# macOS: AppleScript .app launcher + LaunchAgent autostart
+# --------------------------------------------------------------------------- #
 
 def _user_applications_dir() -> Path:
     return Path.home() / "Applications"
@@ -139,13 +157,7 @@ def plist_content(args: list[str]) -> str:
     )
 
 
-def install_launcher() -> Path:
-    """Compile and install the one-click .app bundle to ``~/Applications/``.
-
-    Returns the .app bundle path. Replaces any prior bundle at the same name
-    so a re-install picks up a new vibesignal path.
-    """
-    _check_darwin()
+def _macos_install_launcher() -> Path:
     args = vibesignal_args()
     src = applescript_source(args)
 
@@ -171,9 +183,7 @@ def install_launcher() -> Path:
     return dest
 
 
-def uninstall_launcher() -> bool:
-    """Remove the .app bundle. Returns True iff something was removed."""
-    _check_darwin()
+def _macos_uninstall_launcher() -> bool:
     dest = _user_applications_dir() / APP_NAME
     if not dest.exists():
         return False
@@ -181,13 +191,7 @@ def uninstall_launcher() -> bool:
     return True
 
 
-def install_autostart() -> Path:
-    """Write the LaunchAgent plist and load it via ``launchctl bootstrap``.
-
-    Idempotent: a prior load at the same label is booted out first so the new
-    plist replaces it cleanly.
-    """
-    _check_darwin()
+def _macos_install_autostart(launch_now: bool = True) -> Path:
     args = vibesignal_args()
     content = plist_content(args)
 
@@ -206,16 +210,19 @@ def install_autostart() -> Path:
         )
 
     plist.write_text(content, encoding="utf-8")
-    subprocess.run(
-        ["launchctl", "bootstrap", target, str(plist)],
-        check=True,
-    )
+    if launch_now:
+        # `bootstrap` loads the agent into the running GUI session, and RunAtLoad
+        # starts the widget immediately. Skipped when launch_now is False: the
+        # plist in ~/Library/LaunchAgents is still loaded by launchd at the next
+        # login, so login autostart works without spawning a widget right now.
+        subprocess.run(
+            ["launchctl", "bootstrap", target, str(plist)],
+            check=True,
+        )
     return plist
 
 
-def uninstall_autostart() -> bool:
-    """Unload and delete the LaunchAgent plist. Returns True iff removed."""
-    _check_darwin()
+def _macos_uninstall_autostart() -> bool:
     plist = _plist_path()
     if not plist.exists():
         return False
@@ -227,3 +234,170 @@ def uninstall_autostart() -> bool:
     )
     plist.unlink()
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Windows: .lnk shortcuts via the stock PowerShell WScript.Shell COM object.
+# The widget runs `pythonw -m vibesignal widget` so there is no console window.
+# [Environment]::GetFolderPath resolves Startup / Programs / Desktop correctly
+# even when the Desktop is redirected into OneDrive.
+# --------------------------------------------------------------------------- #
+
+def _windows_pythonw() -> str:
+    """pythonw.exe (no console window) for the widget shortcut.
+
+    pythonw is the sibling of the running interpreter; falls back to the plain
+    executable if pythonw is missing (the widget still runs, with a brief
+    console flash).
+    """
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        return str(exe)
+    pyw = exe.with_name("pythonw.exe")
+    return str(pyw if pyw.is_file() else exe)
+
+
+def _ps_squote(value: str) -> str:
+    """Quote a string as a PowerShell single-quoted literal (doubling any quote)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _windows_shortcut_ps1(folder_id: str, target: str, arguments: str, workdir: str) -> str:
+    """PowerShell that writes (overwriting) VibeSignal.lnk into a known folder.
+
+    ``folder_id`` is a ``System.Environment.SpecialFolder`` name -- ``Startup``,
+    ``Programs``, or ``Desktop``. The script prints the resolved .lnk path.
+    """
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$dir = [Environment]::GetFolderPath({_ps_squote(folder_id)})\n"
+        f"$lnk = Join-Path $dir {_ps_squote(SHORTCUT_NAME)}\n"
+        "$sh = New-Object -ComObject WScript.Shell\n"
+        "$s = $sh.CreateShortcut($lnk)\n"
+        f"$s.TargetPath = {_ps_squote(target)}\n"
+        f"$s.Arguments = {_ps_squote(arguments)}\n"
+        f"$s.WorkingDirectory = {_ps_squote(workdir)}\n"
+        "$s.Description = 'VibeSignal status widget'\n"
+        "$s.Save()\n"
+        "Write-Output $lnk\n"
+    )
+
+
+def _windows_remove_ps1(folder_id: str) -> str:
+    """PowerShell that removes VibeSignal.lnk from a known folder.
+
+    Prints ``removed`` if a shortcut was deleted, ``absent`` otherwise.
+    """
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$dir = [Environment]::GetFolderPath({_ps_squote(folder_id)})\n"
+        f"$lnk = Join-Path $dir {_ps_squote(SHORTCUT_NAME)}\n"
+        "if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force; "
+        "Write-Output 'removed' } else { Write-Output 'absent' }\n"
+    )
+
+
+def _run_powershell(script: str) -> str:
+    """Run a PowerShell script from a temp file; return its trimmed stdout."""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ps1", delete=False, encoding="utf-8"
+    ) as fh:
+        fh.write(script)
+        path = fh.name
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def _windows_launch_widget() -> None:
+    """Start the widget now, detached and console-less, mirroring macOS RunAtLoad."""
+    creationflags = getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(
+        [_windows_pythonw(), "-m", "vibesignal", "widget"],
+        creationflags=creationflags,
+        close_fds=True,
+    )
+
+
+def _windows_install_launcher() -> Path:
+    """Create on-demand VibeSignal shortcuts in the Start Menu and on the Desktop.
+
+    The Start Menu copy is searchable (type ``VibeSignal`` in the Start menu);
+    the Desktop copy is one double-click away. Returns the Start Menu .lnk path.
+    """
+    target, args, workdir = _windows_pythonw(), "-m vibesignal widget", str(Path.home())
+    programs = Path(
+        _run_powershell(_windows_shortcut_ps1("Programs", target, args, workdir))
+    )
+    _run_powershell(_windows_shortcut_ps1("Desktop", target, args, workdir))
+    return programs
+
+
+def _windows_uninstall_launcher() -> bool:
+    """Remove the Start Menu and Desktop shortcuts. True iff one was removed."""
+    results = (
+        _run_powershell(_windows_remove_ps1("Programs")),
+        _run_powershell(_windows_remove_ps1("Desktop")),
+    )
+    return "removed" in results
+
+
+def _windows_install_autostart(launch_now: bool = True) -> Path:
+    """Write a Startup-folder shortcut so the widget launches at every login.
+    Also starts the widget now unless ``launch_now`` is False. Returns the .lnk path."""
+    target, args, workdir = _windows_pythonw(), "-m vibesignal widget", str(Path.home())
+    lnk = Path(_run_powershell(_windows_shortcut_ps1("Startup", target, args, workdir)))
+    if launch_now:
+        _windows_launch_widget()
+    return lnk
+
+
+def _windows_uninstall_autostart() -> bool:
+    """Remove the Startup-folder shortcut. True iff it was removed."""
+    return _run_powershell(_windows_remove_ps1("Startup")) == "removed"
+
+
+# --------------------------------------------------------------------------- #
+# Public API: dispatch by platform.
+# --------------------------------------------------------------------------- #
+
+def install_launcher() -> Path:
+    """Install a one-click launcher (macOS .app, or Windows Start Menu + Desktop
+    shortcuts). Returns the launcher path. Re-install overwrites the prior one."""
+    if sys.platform == "win32":
+        return _windows_install_launcher()
+    _check_supported()
+    return _macos_install_launcher()
+
+
+def uninstall_launcher() -> bool:
+    """Remove the one-click launcher. Returns True iff something was removed."""
+    if sys.platform == "win32":
+        return _windows_uninstall_launcher()
+    _check_supported()
+    return _macos_uninstall_launcher()
+
+
+def install_autostart(launch_now: bool = True) -> Path:
+    """Install login autostart (macOS LaunchAgent, or a Windows Startup shortcut).
+    Also starts the widget now unless ``launch_now`` is False. Returns the
+    autostart file path."""
+    if sys.platform == "win32":
+        return _windows_install_autostart(launch_now=launch_now)
+    _check_supported()
+    return _macos_install_autostart(launch_now=launch_now)
+
+
+def uninstall_autostart() -> bool:
+    """Remove login autostart. Returns True iff something was removed."""
+    if sys.platform == "win32":
+        return _windows_uninstall_autostart()
+    _check_supported()
+    return _macos_uninstall_autostart()

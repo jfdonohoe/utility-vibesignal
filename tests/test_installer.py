@@ -1,9 +1,11 @@
-"""Unit tests for the macOS installer helpers.
+"""Unit tests for the installer helpers (macOS and Windows).
 
-Covers the pure-string helpers (AppleScript and plist generation) and the
-darwin platform guard. The subprocess wrappers (`osacompile`, `launchctl
-bootstrap`) are integration paths that depend on macOS system tools; those
-are exercised manually via the CLI rather than in unit tests.
+Covers the pure-string helpers (AppleScript and plist generation on macOS;
+PowerShell shortcut-script generation on Windows), the platform guards, and
+the platform dispatch of the public install/uninstall functions. The
+subprocess wrappers (`osacompile`, `launchctl bootstrap`, and the PowerShell
+`WScript.Shell` .lnk writes) are integration paths that depend on OS system
+tools; those are exercised manually via the CLI rather than in unit tests.
 """
 
 import pytest
@@ -171,3 +173,130 @@ def test_vibesignal_args_ignores_stale_path_lookup(
     # because the sibling next to fake_python does not exist.
     assert args == [str(fake_python), "-m", "vibesignal"]
     assert str(stale) not in args
+
+
+# ----- Windows shortcut helpers (pure string + dispatch; .lnk creation is
+# an integration path exercised via the CLI, like the macOS subprocess wrappers) -----
+
+def test_ps_squote_wraps_and_doubles_quotes():
+    assert installer._ps_squote("plain") == "'plain'"
+    assert installer._ps_squote("a'b") == "'a''b'"
+
+
+def test_windows_shortcut_ps1_has_folder_target_and_args():
+    ps1 = installer._windows_shortcut_ps1(
+        "Startup", r"C:\Py\pythonw.exe", "-m vibesignal widget", r"C:\Users\jane"
+    )
+    assert "GetFolderPath('Startup')" in ps1
+    assert "CreateShortcut" in ps1
+    assert r"$s.TargetPath = 'C:\Py\pythonw.exe'" in ps1
+    assert "$s.Arguments = '-m vibesignal widget'" in ps1
+    assert r"$s.WorkingDirectory = 'C:\Users\jane'" in ps1
+    assert "VibeSignal.lnk" in ps1
+    assert ps1.strip().endswith("Write-Output $lnk")
+
+
+def test_windows_shortcut_ps1_escapes_single_quote_in_path():
+    # A path with a single quote must be doubled so it cannot break the PS literal.
+    ps1 = installer._windows_shortcut_ps1(
+        "Desktop", r"C:\o'brien\pythonw.exe", "-m vibesignal widget", r"C:\o'brien"
+    )
+    assert "'C:\\o''brien\\pythonw.exe'" in ps1
+
+
+def test_windows_remove_ps1_targets_named_shortcut():
+    ps1 = installer._windows_remove_ps1("Programs")
+    assert "GetFolderPath('Programs')" in ps1
+    assert "VibeSignal.lnk" in ps1
+    assert "Remove-Item" in ps1
+    assert "'removed'" in ps1 and "'absent'" in ps1
+
+
+def test_windows_pythonw_prefers_sibling_pythonw(monkeypatch, tmp_path):
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    py = scripts / "python.exe"
+    py.write_text("")
+    pyw = scripts / "pythonw.exe"
+    pyw.write_text("")
+    monkeypatch.setattr("sys.executable", str(py))
+    assert installer._windows_pythonw() == str(pyw)
+
+
+def test_windows_pythonw_falls_back_to_executable(monkeypatch, tmp_path):
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    py = scripts / "python.exe"
+    py.write_text("")  # no pythonw.exe sibling
+    monkeypatch.setattr("sys.executable", str(py))
+    assert installer._windows_pythonw() == str(py)
+
+
+def test_check_supported_refuses_linux(monkeypatch):
+    monkeypatch.setattr("sys.platform", "linux")
+    with pytest.raises(SystemExit) as exc:
+        installer._check_supported()
+    assert "linux" in str(exc.value)
+
+
+def test_check_supported_passes_on_win32_and_darwin(monkeypatch):
+    for plat in ("win32", "darwin"):
+        monkeypatch.setattr("sys.platform", plat)
+        installer._check_supported()  # must not raise
+
+
+def test_install_launcher_dispatches_to_windows(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    sentinel = object()
+    monkeypatch.setattr(installer, "_windows_install_launcher", lambda: sentinel)
+    assert installer.install_launcher() is sentinel
+
+
+def test_install_autostart_dispatches_to_windows(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    sentinel = object()
+    monkeypatch.setattr(installer, "_windows_install_autostart", lambda launch_now=True: sentinel)
+    assert installer.install_autostart() is sentinel
+
+
+def test_uninstall_dispatches_to_windows(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(installer, "_windows_uninstall_launcher", lambda: True)
+    monkeypatch.setattr(installer, "_windows_uninstall_autostart", lambda: False)
+    assert installer.uninstall_launcher() is True
+    assert installer.uninstall_autostart() is False
+
+
+# ----- install-autostart launch_now (so CI can install the entry headlessly,
+# without spawning the GUI widget on a runner with no usable display) -----
+
+def test_windows_autostart_launch_now_controls_widget_start(monkeypatch):
+    # The Startup .lnk is always written (PowerShell mocked here); the widget is
+    # only started when launch_now is True.
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(installer, "_run_powershell", lambda script: r"C:\Startup\VibeSignal.lnk")
+    started = []
+    monkeypatch.setattr(installer, "_windows_launch_widget", lambda: started.append(1))
+    installer.install_autostart(launch_now=False)
+    assert started == []        # --no-launch: widget not started
+    installer.install_autostart(launch_now=True)
+    assert started == [1]       # default: widget started now
+
+
+def test_macos_autostart_launch_now_controls_bootstrap(monkeypatch, tmp_path):
+    # The plist is always written; `launchctl bootstrap` (start now) only runs
+    # when launch_now is True. Without it, login autostart still works because
+    # launchd loads ~/Library/LaunchAgents at the next login.
+    monkeypatch.setattr("sys.platform", "darwin")
+    plist = tmp_path / "io.github.yzhao062.vibesignal.plist"
+    monkeypatch.setattr(installer, "_launch_agents_dir", lambda: tmp_path)
+    monkeypatch.setattr(installer, "_plist_path", lambda: plist)
+    monkeypatch.setattr(installer, "_launchd_target", lambda: "gui/501")
+    runs = []
+    monkeypatch.setattr(installer.subprocess, "run", lambda cmd, **kw: runs.append(cmd))
+    installer.install_autostart(launch_now=False)
+    assert plist.exists()                                  # plist written
+    assert not any("bootstrap" in cmd for cmd in runs)     # no start-now
+    runs.clear()
+    installer.install_autostart(launch_now=True)
+    assert any("bootstrap" in cmd for cmd in runs)         # start-now

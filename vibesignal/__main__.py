@@ -164,7 +164,10 @@ def cmd_install_launcher(args) -> int:
     from . import installer
     dest = installer.install_launcher()
     print(f"[vibesignal] installed launcher: {dest}")
-    print("Open via Spotlight ('VibeSignal'), or drag the .app to the Dock.")
+    if sys.platform == "win32":
+        print("Launch from the Start menu (type 'VibeSignal') or the Desktop shortcut.")
+    else:
+        print("Open via Spotlight ('VibeSignal'), or drag the .app to the Dock.")
     return 0
 
 
@@ -177,10 +180,18 @@ def cmd_uninstall_launcher(args) -> int:
 
 def cmd_install_autostart(args) -> int:
     from . import installer
-    plist = installer.install_autostart()
-    print(f"[vibesignal] installed autostart LaunchAgent: {plist}")
-    print("Widget starts now (RunAtLoad=true) and at every future login.")
-    print("Close any manually opened widget first to avoid duplicate processes.")
+    launch_now = not getattr(args, "no_launch", False)
+    dest = installer.install_autostart(launch_now=launch_now)
+    if sys.platform == "win32":
+        print(f"[vibesignal] installed autostart shortcut: {dest}")
+        print("The widget starts now and at every future login." if launch_now
+              else "The widget will start at the next login (run 'vibesignal widget' to start it now).")
+    else:
+        print(f"[vibesignal] installed autostart LaunchAgent: {dest}")
+        print("Widget starts now (RunAtLoad=true) and at every future login." if launch_now
+              else "Widget will start at the next login (run 'vibesignal widget &' to start it now).")
+    if launch_now:
+        print("Close any manually opened widget first to avoid duplicate processes.")
     print("Re-run after switching env to re-pin the path.")
     return 0
 
@@ -188,7 +199,7 @@ def cmd_install_autostart(args) -> int:
 def cmd_uninstall_autostart(args) -> int:
     from . import installer
     removed = installer.uninstall_autostart()
-    print(f"[vibesignal] {'removed autostart LaunchAgent' if removed else 'no LaunchAgent found'}")
+    print(f"[vibesignal] {'removed autostart' if removed else 'no autostart found'}")
     return 0
 
 
@@ -233,25 +244,29 @@ def main(argv: list | None = None) -> int:
 
     p_install_launcher = sub.add_parser(
         "install-launcher",
-        help="install a one-click .app launcher to ~/Applications (macOS only)",
+        help="install a one-click launcher (macOS .app, or Windows Start menu + Desktop shortcut)",
     )
     p_install_launcher.set_defaults(func=cmd_install_launcher)
 
     p_uninstall_launcher = sub.add_parser(
         "uninstall-launcher",
-        help="remove the one-click .app launcher (macOS only)",
+        help="remove the one-click launcher",
     )
     p_uninstall_launcher.set_defaults(func=cmd_uninstall_launcher)
 
     p_install_autostart = sub.add_parser(
         "install-autostart",
-        help="install a login autostart LaunchAgent (macOS only)",
+        help="install login autostart (macOS LaunchAgent, or Windows Startup shortcut) and start the widget now",
+    )
+    p_install_autostart.add_argument(
+        "--no-launch", action="store_true",
+        help="install the autostart entry but do not start the widget now (it starts at the next login)",
     )
     p_install_autostart.set_defaults(func=cmd_install_autostart)
 
     p_uninstall_autostart = sub.add_parser(
         "uninstall-autostart",
-        help="remove the login autostart LaunchAgent (macOS only)",
+        help="remove login autostart",
     )
     p_uninstall_autostart.set_defaults(func=cmd_uninstall_autostart)
 

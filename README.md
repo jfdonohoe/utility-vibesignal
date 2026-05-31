@@ -2,7 +2,7 @@
 
 # VibeSignal
 
-**A daemon-free physical status light for AI coding agents (Claude Code, Codex)**
+**A physical USB status light for AI coding agents (Claude Code, Codex)**
 
 [![PyPI](https://img.shields.io/pypi/v/vibesignal.svg)](https://pypi.org/project/vibesignal/)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
@@ -10,19 +10,18 @@
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#whats-next)
 [![GitHub Stars](https://img.shields.io/github/stars/yzhao062/vibesignal?style=social)](https://github.com/yzhao062/vibesignal)
 
-[Install](#install) · [macOS Quickstart](#macos-quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
-
-<br>
-
-<img src="https://raw.githubusercontent.com/yzhao062/vibesignal/main/docs/widget-mockup.png" alt="vibesignal floating widget: a calm grey panel while agents work, turning red the moment a session blocks for your input" width="760">
+[Install](#install) · [Quickstart](#quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
 
 </div>
 
-> [!TIP]
-> Maintained by [Yue Zhao](https://yzhao062.github.io): USC CS faculty, author of [PyOD](https://github.com/yzhao062/pyod) (9.8K stars, 38M+ downloads, ~12K research citations).
-
 > [!NOTE]
-> When Claude Code or Codex needs your reply, a USB light on your desk turns amber. When an agent finishes its turn, it turns blue. While an agent is working, green. A light on the desk is harder to miss than another system notification, which is the whole point.
+> **The light is the point.** When Claude Code or Codex needs your reply, a USB light on your desk turns amber. When an agent finishes its turn, it turns blue. While an agent is working, green. A light on the desk is harder to miss than one more notification in the corner of a screen you are already ignoring.
+
+No light on your desk yet? The same signal renders on screen, so you can run VibeSignal today and add the hardware later. The always-on-top widget below stays calm grey while agents work, and turns red the moment a session blocks for your input.
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/yzhao062/vibesignal/main/docs/widget-mockup.png" alt="The VibeSignal widget mirrors the desk light on screen: a calm grey panel while agents work, turning red when a session blocks for your input" width="760">
+</p>
 
 ## What You Get
 
@@ -31,7 +30,7 @@
 - 🤖 **Cross-agent:** the same store covers Claude Code and Codex; one light tracks both
 - 📺 **Three renderers:** USB busylight (hardware), terminal watch panel, always-on-top Tk widget
 - 🚦 **Multi-session aware:** runs 4–5 agents in parallel; the widget shows which one is blocked
-- 🍎 **macOS one-click:** `install-launcher` + `install-autostart` wire the `.app` and the LaunchAgent
+- 🖱️ **One-click on macOS and Windows:** `install-launcher` + `install-autostart` wire a native launcher and login autostart (`.app` + LaunchAgent on macOS; Start menu, Desktop, and Startup shortcuts on Windows)
 - 🪟 **Cross-platform:** Windows, macOS, Linux; per-platform fonts and work-area detection
 
 ## Install
@@ -46,19 +45,6 @@ On macOS, add the `macos` extra for accurate Dock-aware widget placement:
 pip install 'vibesignal[macos]'
 ```
 
-Then wire autostart for your OS.
-
-**macOS** (one-click launcher in Spotlight and the Dock, plus login autostart):
-
-```bash
-vibesignal install-launcher
-vibesignal install-autostart
-```
-
-**Windows**: put a shortcut to `pythonw -m vibesignal widget` in the Startup folder (Win+R, type `shell:startup`, drop the shortcut there).
-
-**Linux**: add a `.desktop` entry under `~/.config/autostart/` that runs `vibesignal widget`.
-
 <details>
 <summary>Install the latest unreleased build from GitHub</summary>
 
@@ -71,36 +57,34 @@ pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
 
 </details>
 
-After install, [configure your agents](#configure-agents) to fire the hooks.
+The [Quickstart](#quickstart) below wires the one-click launcher and login autostart on macOS and Windows. On Linux, add a `.desktop` entry under `~/.config/autostart/` that runs `vibesignal widget`, then [configure your agents](#configure-agents) to fire the hooks.
 
-## macOS Quickstart
+## Quickstart
 
-First-run walk-through on a Mac:
+Install, wire the Claude Code hooks once (see [Configure Agents](#configure-agents)), then run the two install commands for your OS.
+
+**macOS:**
 
 ```bash
-# 1. Install (with macos extra for accurate Dock-aware placement)
-pip install 'vibesignal[macos]'
-
-# 2. Wire Claude Code hooks (one-time, user level)
-#    Merge hooks/claude-settings.snippet.json into ~/.claude/settings.json
-#    under "hooks". See `Configure Agents` below for details.
-
-# 3. Install the one-click .app launcher
-vibesignal install-launcher
-#    Spotlight: Cmd+Space, type 'VibeSignal', press Enter.
-#    Or drag ~/Applications/VibeSignal.app to the Dock.
-
-# 4. Install login autostart (also starts the widget right now)
-vibesignal install-autostart
-
-# 5. Verify
-vibesignal status            # active sessions and the resolved color
-launchctl print gui/$UID/io.github.yzhao062.vibesignal | grep -E "state|program"
+pip install 'vibesignal[macos]'   # macos extra: accurate Dock-aware widget placement
+vibesignal install-launcher       # Spotlight-able .app, draggable to the Dock
+vibesignal install-autostart      # starts the widget now and at every login
+vibesignal status                 # verify: active sessions + resolved color
 ```
 
-After step 4 a small panel appears in the bottom-left of your screen. When any Claude Code session blocks for permission, the panel turns red and shows which session.
+**Windows:**
 
-**Daily lifecycle on macOS:**
+```powershell
+pip install vibesignal
+vibesignal install-launcher       # Start menu (type 'VibeSignal') + Desktop shortcut
+vibesignal install-autostart      # starts the widget now and at every login
+vibesignal status                 # verify: active sessions + resolved color
+```
+
+After `install-autostart`, a small panel appears in the bottom-left of your screen. When any session blocks for permission, the panel turns red and shows which session.
+
+<details>
+<summary><b>macOS daily lifecycle</b> (show or quit the widget, autostart controls)</summary>
 
 | Action | Command |
 |---|---|
@@ -115,6 +99,23 @@ After step 4 a small panel appears in the bottom-left of your screen. When any C
 | Tail autostart logs | `tail /tmp/io.github.yzhao062.vibesignal.log /tmp/io.github.yzhao062.vibesignal.err` |
 | Re-pin paths after switching conda env | `vibesignal install-autostart` |
 | Manually clear stuck sessions | `vibesignal clear` (all) or `vibesignal clear --session <id>` |
+
+</details>
+
+<details>
+<summary><b>Windows daily lifecycle</b> (show or quit the widget, autostart controls)</summary>
+
+| Action | Command |
+|---|---|
+| Show widget on demand | Start menu → type `VibeSignal`; or the Desktop shortcut; or `pythonw -m vibesignal widget` |
+| Quit widget window | Right-click the header → Quit |
+| Disable autostart, keep launcher | `vibesignal uninstall-autostart` |
+| Re-enable autostart later | `vibesignal install-autostart` (idempotent) |
+| Remove the launcher shortcuts | `vibesignal uninstall-launcher` |
+| Re-pin paths after switching conda env | `vibesignal install-autostart` |
+| Manually clear stuck sessions | `vibesignal clear` (all) or `vibesignal clear --session <id>` |
+
+</details>
 
 ## How It Works
 
@@ -254,24 +255,22 @@ The 8-hour backstop only self-cleans a hard-crashed session that left no final e
 </details>
 
 <details>
-<summary><b>macOS Launcher and Autostart Internals</b></summary>
+<summary><b>Launcher and Autostart Internals (macOS + Windows)</b></summary>
 
-Two helper subcommands wire up macOS-native paths without any new package dependency:
+The same two subcommands wire up native paths on each OS, with no new package dependency:
 
 ```bash
-# One-click launcher: compiles an AppleScript .app via `osacompile` into
-# ~/Applications/VibeSignal.app. Spotlight-able, draggable to the Dock.
-vibesignal install-launcher
+vibesignal install-launcher      # macOS .app / Windows Start menu + Desktop shortcut
 vibesignal uninstall-launcher
-
-# Login autostart: writes ~/Library/LaunchAgents/io.github.yzhao062.vibesignal.plist
-# with the absolute path of `vibesignal` baked in (so LaunchAgent's empty PATH
-# is not an issue), then loads via `launchctl bootstrap gui/<uid>`. The widget
-# starts immediately (RunAtLoad=true) AND at every future login. Re-run after
-# switching env to re-pin.
-vibesignal install-autostart
+vibesignal install-autostart     # macOS LaunchAgent / Windows Startup shortcut; starts now + every login
 vibesignal uninstall-autostart
 ```
+
+**macOS** compiles an AppleScript `.app` via `osacompile` into `~/Applications/VibeSignal.app` (Spotlight-able, draggable to the Dock), and writes `~/Library/LaunchAgents/io.github.yzhao062.vibesignal.plist` with the absolute path of `vibesignal` baked in (so LaunchAgent's empty PATH is not an issue), loaded via `launchctl bootstrap gui/<uid>`.
+
+**Windows** writes `VibeSignal.lnk` shortcuts through the stock PowerShell `WScript.Shell` COM object: Start menu plus Desktop for the launcher, and the Startup folder for autostart. The shortcut runs `pythonw -m vibesignal widget` so there is no console window, and `[Environment]::GetFolderPath` resolves the Startup / Programs / Desktop folders correctly even when the Desktop is redirected into OneDrive.
+
+On both systems the widget starts immediately on `install-autostart` and at every future login. Re-run `install-autostart` after switching env to re-pin the interpreter path.
 
 The work area is detected per platform: `SPI_GETWORKAREA` on Windows (taskbar excluded); `NSScreen.visibleFrame` on macOS (menu bar and Dock excluded), with a 28 / 80 px heuristic fallback when `pyobjc` is absent; full screen on Linux. The fallback assumes a bottom Dock; install the `macos` extra for accurate placement under any Dock orientation.
 
@@ -296,7 +295,7 @@ vibesignal/
 |   |-- lock.py         # bounded cross-process lock for the event critical section
 |   |-- panel.py        # live multi-session TUI panel (foreground viewer)
 |   |-- widget.py       # always-on-top floating GUI panel (Tkinter, stdlib)
-|   |-- installer.py    # macOS one-click .app + LaunchAgent autostart helpers
+|   |-- installer.py    # macOS .app + LaunchAgent / Windows .lnk launcher + autostart
 |   |-- __main__.py     # CLI invoked by hooks
 |-- hooks/
 |   |-- claude-settings.snippet.json
@@ -317,7 +316,7 @@ vibesignal/
 ## What's Next
 
 > [!NOTE]
-> Shipped since the last release: PyPI packaging (`pip install vibesignal`) and a GitHub Actions CI matrix (Windows / macOS / Linux, Python 3.11 to 3.13).
+> Recently shipped: one-click Windows setup (`install-launcher` / `install-autostart`), PyPI packaging (`pip install vibesignal`), and a GitHub Actions CI matrix (Windows / macOS / Linux, Python 3.11 to 3.13).
 
 - **Homebrew tap** at `yzhao062/homebrew-tap` for `brew install yzhao062/tap/vibesignal`
 - **Multi-LED strip** support: a BlinkStick Strip with one cell per session (the store already keys by session; needs a `session -> cell` map in `resolve.py`)

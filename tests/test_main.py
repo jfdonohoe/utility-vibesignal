@@ -161,3 +161,74 @@ def test_status_lists_blocked_older_than_store_ttl(tmp_path, monkeypatch):
     assert proc.returncode == 0
     assert "claude/s1" in proc.stdout
     assert "(no active sessions)" not in proc.stdout
+
+
+# ----- Platform-aware install messaging. The installer dispatches by platform
+# (covered in test_installer.py); these guard that the CLI's *words* match the
+# platform too, so a Windows user never sees "LaunchAgent" / "Spotlight". -----
+
+def test_install_launcher_message_is_windows_on_win32(capsys, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(
+        "vibesignal.installer.install_launcher",
+        lambda: Path(r"C:\Start Menu\VibeSignal.lnk"),
+    )
+    assert cli.cmd_install_launcher(None) == 0
+    out = capsys.readouterr().out
+    assert "Start menu" in out
+    assert "Spotlight" not in out and "Dock" not in out
+
+
+def test_install_autostart_message_is_windows_on_win32(capsys, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(
+        "vibesignal.installer.install_autostart",
+        lambda launch_now=True: Path(r"C:\Startup\VibeSignal.lnk"),
+    )
+    assert cli.cmd_install_autostart(None) == 0
+    out = capsys.readouterr().out
+    assert "shortcut" in out
+    assert "LaunchAgent" not in out
+
+
+def test_install_autostart_message_is_macos_on_darwin(capsys, monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(
+        "vibesignal.installer.install_autostart",
+        lambda launch_now=True: Path("/Users/j/Library/LaunchAgents/io.github.yzhao062.vibesignal.plist"),
+    )
+    assert cli.cmd_install_autostart(None) == 0
+    out = capsys.readouterr().out
+    assert "LaunchAgent" in out
+
+
+def test_version_matches_pyproject():
+    # Guard the two version strings (pyproject [project].version and the package
+    # __version__) against drift -- the exact release-correctness bug caught in
+    # the 0.1.1 review.
+    import tomllib
+
+    import vibesignal
+
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as fh:
+        pyproject_version = tomllib.load(fh)["project"]["version"]
+    assert vibesignal.__version__ == pyproject_version
+
+
+def test_install_autostart_no_launch_passes_launch_now_false(capsys, monkeypatch):
+    # `--no-launch` must thread through to installer.install_autostart(launch_now=False)
+    # and the message must say "next login", not "starts now".
+    import types
+    seen = {}
+
+    def fake_install(launch_now=True):
+        seen["launch_now"] = launch_now
+        return Path(r"C:\Startup\VibeSignal.lnk")
+
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr("vibesignal.installer.install_autostart", fake_install)
+    assert cli.cmd_install_autostart(types.SimpleNamespace(no_launch=True)) == 0
+    assert seen["launch_now"] is False
+    out = capsys.readouterr().out
+    assert "next login" in out
+    assert "starts now" not in out
