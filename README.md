@@ -1,146 +1,121 @@
+<div align="center">
+
 # VibeSignal
 
-A physical status light for coding agents. When Claude Code or Codex needs your
-reply (a permission prompt or a question), a USB light on your desk turns amber;
-when an agent finishes its turn, it turns blue. While an agent is working, it is
-green. When nothing needs you, it is off. A light on the desk is harder to miss than another system
-notification, which is the whole point.
+**A daemon-free physical status light for AI coding agents (Claude Code, Codex)**
 
-This is the daemon-free, single-machine setup: one physical light driven directly
-by agent hooks, plus a terminal `watch` panel and an always-on-top floating widget
-for the times you run several sessions at once. It is built to grow into a
-multi-agent strip or a networked setup later without rewiring the hooks.
+[![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#whats-next)
+[![GitHub Stars](https://img.shields.io/github/stars/yzhao062/vibesignal?style=social)](https://github.com/yzhao062/vibesignal)
 
-## What It Does
+[Install](#install) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
 
-| State | Light | Set by (Claude Code hooks) | Meaning |
-|-------|-------|----------------------------|---------|
-| `blocked` | Amber, solid | `Notification` (`permission_prompt`) | An agent needs you now (permission / question) |
-| `done` | Blue, solid | `Stop`, `StopFailure`, `Notification` (`idle_prompt`) | An agent finished its turn; your move |
-| `working` | Green, solid | `UserPromptSubmit`, `PostToolUse` | An agent is busy, do not interrupt |
-| `error` | Red, solid | (manual only, see below) | A failure |
-| `idle` | Off | TTL timeout, done-fade | Nothing needs you |
+</div>
 
-When several sessions run at once, the light shows the highest-priority state:
-`blocked > error > done > working > idle`. If any one agent is waiting on you, the
-light is amber, so the signal you care about most is never hidden.
+> [!TIP]
+> Maintained by [Yue Zhao](https://yzhao062.github.io): USC CS faculty, author of [PyOD](https://github.com/yzhao062/pyod) (9.8K stars, 38M+ downloads, ~12K research citations).
 
-## How It Works
+> [!NOTE]
+> When Claude Code or Codex needs your reply, a USB light on your desk turns amber. When an agent finishes its turn, it turns blue. While an agent is working, green. A light on the desk is harder to miss than another system notification, which is the whole point.
 
-No background service. Every hook invocation does the full cycle and exits:
+## What You Get
 
-```
-hook fires  ->  vibesignal event --agent claude --state blocked
-                  |
-                  |-- write  ~/.vibesignal/sessions/claude-<id>.json = {state, ts}
-                  |-- read   every session file, drop ones past their per-state TTL
-                  |-- resolve the aggregate state by priority
-                  |-- if the color changed since last time, set the USB light
-```
-
-Nothing has to stay running, so nothing can crash or need restarting. A session
-that dies without a final event is dropped by its per-state TTL. A small `last_color.json`
-cache means repeated same-state events (for example, many `PostToolUse` calls in
-one turn) skip the USB write entirely and stay fast.
-
-Concurrent hooks are kept honest two ways. The record-resolve-apply cycle runs
-under a short cross-process lock, so two sessions firing at once cannot leave the
-light on a lower-priority color (a finishing `working` hook overwriting a fresh
-`blocked` event from another session). Every state file is written atomically (temp
-file plus `os.replace`), so a reader never sees a half-written file. The lock is
-bounded: if it cannot be taken quickly it proceeds anyway, because never blocking
-the agent's hook matters more than perfect ordering under rare contention. The
-color cache updates only after the device accepts the write, so testing with no
-light attached does not suppress the first real write once the light is plugged in.
-
-## Why Solid Colors, Not Blinking
-
-Blinking a USB light needs a process that stays alive to drive the blink, which
-would mean a daemon. Solid colors persist in the light hardware after the process
-exits, so they fit the daemon-free design. This setup uses solid colors only. Amber solid
-is still very visible. If you want a blinking "needs you" later, see Daemon Mode
-below. This assumes a light that holds its last state, such as Luxafor, blink(1),
-or BlinkStick. Kuando-style lights that need a constant connection would require
-the daemon mode even for solid colors.
-
-## Hardware
-
-There is no purpose-built "AI agent light" product. The proven path is a
-commercial presence light plus the open-source `busylight-core` library (the engine
-behind `busylight-for-humans`), which supports many USB lights across multiple
-vendors and is on PyPI.
-
-Recommended for this single-beacon setup (both on Amazon US, both hold their
-color, both supported by the library):
-
-- **Luxafor Flag 2**: magnet-mounts on a monitor edge, USB-C, good eye-level spot.
-- **blink(1) mk2**: tiny, fully open, a long-standing developer favorite.
-
-Check the live price before buying.
+- 🟢 **Solid colors, daemon-free:** the state persists in the hardware after the hook exits; no service to keep alive
+- 🪝 **Hook-driven:** `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd` all wire in via JSON
+- 🤖 **Cross-agent:** the same store covers Claude Code and Codex; one light tracks both
+- 📺 **Three renderers:** USB busylight (hardware), terminal watch panel, always-on-top Tk widget
+- 🚦 **Multi-session aware:** runs 4–5 agents in parallel; the widget shows which one is blocked
+- 🍎 **macOS one-click:** `install-launcher` + `install-autostart` wire the `.app` and the LaunchAgent
+- 🪟 **Cross-platform:** Windows, macOS, Linux; per-platform fonts and work-area detection
 
 ## Install
 
-```bash
-pip install -e .
-```
+> [!IMPORTANT]
+> Pre-release: install from GitHub for now. `pip install vibesignal` becomes the canonical form once the project lands on PyPI.
 
-Run this from the `vibesignal/` directory. It installs the
-`vibesignal` command and its `busylight-core` dependency (the engine behind
-`busylight-for-humans`). On Windows,
-USB HID access works once the library and its `hidapi` backend are installed by
-pip.
-
-## Wire Up Claude Code
-
-Merge the keys in `hooks/claude-settings.snippet.json` into your
-`~/.claude/settings.json` under `"hooks"` (user level, so every project drives the
-one light). If a hook key already exists, append the new entry to its array rather
-than replacing it. These keys (`UserPromptSubmit`, `PostToolUse`, `Notification`,
-`Stop`, `StopFailure`, `SessionEnd`) do not collide with the shared `PreToolUse` and
-`SessionStart` hooks. `Notification` is split by matcher: a `permission_prompt` sets
-`blocked`, an `idle_prompt` sets `done`. `SessionEnd` calls `vibesignal end`,
-so a closed session leaves the panel at once instead of waiting out the TTL.
-
-The `vibesignal` command reads the session id from the hook's stdin JSON,
-so one light tracks every concurrent session on the machine.
-
-A note on `PostToolUse`: it returns the light to green after you approve a
-mid-task permission prompt, at the cost of one quick call per tool use. Drop it if
-you prefer zero per-tool overhead; the light then stays amber from a permission
-prompt until the turn ends.
-
-## Wire Up Codex
-
-The state store is agent-agnostic: events carry an `--agent` tag. Codex points at
-the same command with `--agent codex`, so one light covers both. See
-`hooks/codex-hooks.md` for the mapping. Claude Code is wired first; the Codex side
-is documented so a role-reversed or Codex-only session can wire it without
-re-deriving the design.
-
-## Test Without Hardware
-
-The light arrives later than the code does, so the whole pipeline is observable
-without a device:
+**macOS** (install the `macos` extra for accurate Dock-aware widget placement):
 
 ```bash
-vibesignal event --agent claude --state working
-vibesignal status      # prints active sessions and the resolved color
-vibesignal off         # clears all sessions
+pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
+
+# One-click launcher (Spotlight, Dock):
+vibesignal install-launcher
+
+# Login autostart:
+vibesignal install-autostart
 ```
 
-With no light connected, `event` records state and prints the color it would set,
-then exits cleanly. Hooks never fail when the light is missing or unplugged.
+**Windows:**
 
-## Watch Panel (Multiple Sessions)
+```powershell
+pip install git+https://github.com/yzhao062/vibesignal.git
 
-Running several agents at once? A single light only says "someone needs you." The
-panel shows which one. In a spare terminal pane:
+# Autostart: put a shortcut to `pythonw -m vibesignal widget` in the Startup folder
+# (Win+R, type shell:startup, drop the shortcut there).
+```
+
+**Linux:**
+
+```bash
+pip install git+https://github.com/yzhao062/vibesignal.git
+
+# Autostart: add a .desktop entry under ~/.config/autostart/ that runs `vibesignal widget`.
+```
+
+After install, [configure your agents](#configure-agents) to fire the hooks.
+
+## How It Works
+
+Every hook invocation does the full cycle and exits. Nothing has to stay running.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#dbeafe', 'primaryTextColor': '#1e3a8a',
+  'primaryBorderColor': '#3b82f6', 'lineColor': '#475569',
+  'fontFamily': 'system-ui', 'fontSize': '13px'
+}}}%%
+flowchart LR
+    H["Claude Code / Codex hook"] --> C["vibesignal event<br/>--agent X --state Y"]
+    C --> S[("~/.vibesignal/<br/>sessions/*.json")]
+    S --> L["USB busylight"]
+    S --> P["Watch panel"]
+    S --> W["Floating widget"]
+```
+
+Each hook fires `vibesignal event`, which writes one JSON file per (agent, session), reads every active file, resolves the aggregate state by priority (`blocked > error > done > working > idle`), and updates the USB light if the color changed. Sessions that stop emitting events drop off after their per-state TTL.
+
+Concurrent hooks stay honest two ways. The record-resolve-apply cycle holds a short cross-process lock, so two sessions firing at once cannot leave the light on a lower-priority color (a finishing `working` hook overwriting a fresh `blocked` event from another session). Every state file is written atomically (`tempfile` plus `os.replace`), so a reader never sees a half-written file. The lock is bounded: if it cannot be taken quickly it gives up and proceeds, because never blocking the agent's hook matters more than perfect ordering under rare contention.
+
+## State Table
+
+| State | Light | Set by (Claude Code hook) | Meaning |
+|-------|-------|---------------------------|---------|
+| `blocked` | Amber, solid | `Notification` (`permission_prompt`) | An agent needs you now |
+| `done` | Blue, solid | `Stop`, `StopFailure`, `Notification` (`idle_prompt`) | An agent finished its turn; your move |
+| `working` | Green, solid | `UserPromptSubmit`, `PostToolUse` | An agent is busy, do not interrupt |
+| `error` | Red, solid | Manual only | A failure |
+| `idle` | Off | TTL timeout, done-fade | Nothing needs you |
+
+Aggregate priority across active sessions: `blocked > error > done > working > idle`. If any one agent is waiting on you, the light is amber, so the signal you care about most is never hidden.
+
+## Three Renderers
+
+| Renderer | Command | Where It Lives |
+|---|---|---|
+| 🟢 **USB busylight** | Driven automatically by every `event` call | Physical light on the desk |
+| 📋 **Watch panel** | `vibesignal watch` | Live multi-session TUI in a terminal pane |
+| 🪟 **Floating widget** | `vibesignal widget` | Always-on-top Tk window |
+
+All three read the same state store, so they stay in sync. The widget shows which session is blocked when several agents run at once. The USB light shows the highest-priority state across all sessions.
+
+### Watch Panel
 
 ```bash
 vibesignal watch
 ```
 
-It prints a live table, one row per active session, blocked rows first:
+Live table, one row per active session, blocked rows first:
 
 ```
   PROJECT          AGENT    STATE      FOR
@@ -150,90 +125,111 @@ o iet-paper        claude   o done     3s
 . random           claude   . working  --
 ```
 
-The panel reads the same store the light uses, so it covers Claude and Codex
-together and stays in sync with the light. It is a foreground viewer (Ctrl-C to
-stop), not a daemon. `vibesignal watch --once` renders a single snapshot.
+Foreground viewer (Ctrl-C to stop), not a daemon. `vibesignal watch --once` renders a single snapshot.
 
-## Floating Widget (Always on Top)
+### Floating Widget
 
-The terminal panel needs a spare pane. The widget shows the same view as a small
-always-on-top window, so it stays visible over any app:
+Cross-platform Tk panel, always-on-top, draggable by the header. Right-click to quit; on macOS, `Control`-click also opens the Quit menu.
 
 ```bash
-# Windows (no console window)
+# macOS: open via Spotlight ("VibeSignal") after install-launcher, or:
+vibesignal widget &
+
+# Windows (no console window):
 pythonw -m vibesignal widget
 
-# macOS one-click launcher: install once, then open via Spotlight / Dock
-vibesignal install-launcher
-
-# macOS / Linux on-demand from a terminal
+# Linux:
 vibesignal widget &
 ```
 
-It starts in the bottom-left of the work area, shows one row per active session
-(blocked first, with a state-colored accent bar), and refreshes about once a
-second. Drag the header to move it anywhere on screen; right-click to quit.
-On macOS, `Control`-click also opens the Quit menu, since some Tk builds report
-the right mouse button as `Button-2`. The widget reads the same store as the light
-and the panel, so all three stay in sync. A `done` row fades off after about 90
-seconds, a silent `working` row clears after 10 minutes, and `blocked` or `error`
-rows remain until the state changes or the 8-hour backstop expires.
+The widget pins to the bottom-left of the work area on first launch, then becomes draggable. A `done` row fades after about 90 seconds, a silent `working` row clears after 10 minutes, and `blocked` or `error` rows persist until the state changes or the 8-hour backstop expires.
 
-The work area is detected per platform: `SPI_GETWORKAREA` on Windows (taskbar
-excluded); `NSScreen.visibleFrame` on macOS (menu bar and Dock excluded), with a
-28 / 80 px heuristic fallback when `pyobjc` is absent; full screen on Linux. The
-heuristic assumes a bottom Dock, so a left or right Dock will overlap the widget
-at startup. For accurate placement under any Dock orientation, install the macOS
-extra: `pip install -e '.[macos]'` (pulls `pyobjc-framework-Cocoa`). The font is
-`Segoe UI` on Windows, `Helvetica Neue` on macOS, and `DejaVu Sans` elsewhere.
+## Configure Agents
 
-### macOS One-Click Launcher and Autostart
+### Claude Code
 
-Two helper subcommands set up the launcher and autostart without any new
-package dependency; both compile down to standard macOS tooling (`osacompile`
-for the .app, `launchctl bootstrap` for the LaunchAgent):
+Merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"`. The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL.
+
+The `vibesignal` command reads the session id from the hook's stdin JSON, so one light tracks every concurrent session.
+
+> [!TIP]
+> `PostToolUse` returns the light to green after you approve a mid-task permission prompt, at the cost of one quick call per tool use. Drop it if you prefer zero per-tool overhead; the light then stays amber until the turn ends.
+
+### Codex
+
+The state store is agent-agnostic: events carry an `--agent` tag. Codex points at the same command with `--agent codex`, so one light covers both. See [`hooks/codex-hooks.md`](hooks/codex-hooks.md) for the mapping (Codex's `notify` program or 0.130+ hooks system).
+
+## Test Without Hardware
+
+The light arrives later than the code does, so the whole pipeline is observable without a device:
 
 ```bash
-# One-click launcher: compiles an AppleScript .app to ~/Applications.
-# Open via Spotlight ("VibeSignal"), or drag the .app to the Dock.
+vibesignal event --agent claude --state working
+vibesignal status        # active sessions and the resolved color
+vibesignal off           # clear all sessions
+```
+
+With no light connected, `event` records state and prints the color it would set, then exits cleanly. Hooks never fail when the light is missing or unplugged.
+
+## Hardware
+
+There is no purpose-built "AI agent light" product. The proven path is a commercial presence light plus the open-source [`busylight-core`](https://pypi.org/project/busylight-core/) library, which supports many USB lights across multiple vendors.
+
+| Light | Form | Notes |
+|---|---|---|
+| **Luxafor Flag 2** | Magnet on a monitor edge, USB-C | Eye-level spot, holds its color |
+| **blink(1) mk2** | Tiny, fully open | Long-standing developer favorite |
+
+Both are on Amazon US and supported by `busylight-core`. Check the live price before buying.
+
+<details>
+<summary><b>Why Solid Colors, Not Blinking</b></summary>
+
+Blinking a USB light needs a process that stays alive to drive the blink, which would mean a daemon. Solid colors persist in the light hardware after the process exits, so they fit the daemon-free design. Amber solid is still very visible.
+
+This assumes a light that holds its last state (Luxafor, blink(1), BlinkStick). Kuando-style lights that need a constant connection would require the daemon mode even for solid colors.
+
+</details>
+
+<details>
+<summary><b>Per-State Lifetimes</b></summary>
+
+- **`done`** fades after ~90 seconds (a transient "your move" pulse)
+- **`working`** clears after 10 minutes of silence (a silent working session is treated as dead)
+- **`blocked`** and **`error`** persist for up to 8 hours: nothing refreshes them while they wait on you, and a shorter TTL would drop a long-pending prompt exactly when it is most overdue. Cleared sooner when you act on it, when the session ends, or by `vibesignal clear`.
+
+The 8-hour backstop only self-cleans a hard-crashed session that left no final event.
+
+</details>
+
+<details>
+<summary><b>macOS Launcher and Autostart Internals</b></summary>
+
+Two helper subcommands wire up macOS-native paths without any new package dependency:
+
+```bash
+# One-click launcher: compiles an AppleScript .app via `osacompile` into
+# ~/Applications/VibeSignal.app. Spotlight-able, draggable to the Dock.
 vibesignal install-launcher
 vibesignal uninstall-launcher
 
 # Login autostart: writes ~/Library/LaunchAgents/io.github.yzhao062.vibesignal.plist
-# with the absolute path of vibesignal baked in (so LaunchAgent's empty
-# PATH is not an issue), then loads it via `launchctl bootstrap gui/<uid>`.
-# Widget starts immediately (RunAtLoad=true) AND at every future login; close
-# any manually opened widget first to avoid duplicates. Re-run after switching
-# env to re-pin.
+# with the absolute path of `vibesignal` baked in (so LaunchAgent's empty PATH
+# is not an issue), then loads via `launchctl bootstrap gui/<uid>`. The widget
+# starts immediately (RunAtLoad=true) AND at every future login. Re-run after
+# switching env to re-pin.
 vibesignal install-autostart
 vibesignal uninstall-autostart
 ```
 
-Both commands are macOS only and refuse on other platforms.
+The work area is detected per platform: `SPI_GETWORKAREA` on Windows (taskbar excluded); `NSScreen.visibleFrame` on macOS (menu bar and Dock excluded), with a 28 / 80 px heuristic fallback when `pyobjc` is absent; full screen on Linux. The fallback assumes a bottom Dock; install the `macos` extra for accurate placement under any Dock orientation.
 
-To autostart on Windows, place a shortcut to `pythonw -m vibesignal widget`
-in the Startup folder. To autostart on Linux, add a `.desktop` autostart entry
-under `~/.config/autostart/` that runs `vibesignal widget`.
+Fonts: `Segoe UI` on Windows, `Helvetica Neue` on macOS, `DejaVu Sans` elsewhere.
 
-## Status Taxonomy and Future Options
+</details>
 
-- **Blue split**: implemented in v2, refined in v3. `Notification` (`permission_prompt`)
-  maps to `blocked` (amber); `Stop`, `StopFailure`, and `Notification` (`idle_prompt`)
-  map to `done` (blue), so "blocked, look now" stays visually distinct from
-  "finished, look when free."
-- **Per-state lifetime**: a `done` row leaves the panel after about 90 seconds, and a
-  silent `working` row after 10 minutes. A `blocked` row persists for up to 8 hours
-  (cleared sooner when you act on it or the session ends), because nothing refreshes a
-  blocked session while it waits, so a short TTL would drop it exactly when it is most
-  overdue.
-- **Red / error**: Claude Code has no clean "task failed" hook, so red remains
-  manual only. Use `--state error` manually to test the red path.
-- **Multi-agent strip**: a BlinkStick Strip with one cell per session needs only a
-  session-to-cell map in `resolve.py`; the store already keys by session.
-- **Daemon mode**: a small long-running process would enable blinking patterns and
-  auto-off after idle, at the cost of a service to keep alive.
-
-## Project Layout
+<details>
+<summary><b>Project Layout</b></summary>
 
 ```
 vibesignal/
@@ -264,3 +260,17 @@ vibesignal/
     |-- test_installer.py
     |-- test_hooks.py
 ```
+
+</details>
+
+## What's Next
+
+- **PyPI release** so `pip install vibesignal` works as the canonical install path
+- **Homebrew tap** at `yzhao062/homebrew-tap` for `brew install yzhao062/tap/vibesignal`
+- **GitHub Actions CI** matrix on Windows, macOS, Linux against Python 3.11 / 3.12 / 3.13
+- **Multi-LED strip** support: a BlinkStick Strip with one cell per session (the store already keys by session; needs a `session -> cell` map in `resolve.py`)
+- **Daemon mode (opt-in)** for blinking patterns and auto-off after idle, at the cost of a service to keep alive
+
+## License
+
+[BSD 2-Clause](LICENSE) © 2026 Yue Zhao
