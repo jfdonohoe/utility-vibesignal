@@ -9,7 +9,7 @@
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#whats-next)
 [![GitHub Stars](https://img.shields.io/github/stars/yzhao062/vibesignal?style=social)](https://github.com/yzhao062/vibesignal)
 
-[Install](#install) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
+[Install](#install) · [macOS Quickstart](#macos-quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
 
 </div>
 
@@ -64,6 +64,49 @@ pip install git+https://github.com/yzhao062/vibesignal.git
 ```
 
 After install, [configure your agents](#configure-agents) to fire the hooks.
+
+## macOS Quickstart
+
+First-run walk-through on a Mac:
+
+```bash
+# 1. Install (with macos extra for accurate Dock-aware placement)
+pip install 'vibesignal[macos] @ git+https://github.com/yzhao062/vibesignal.git'
+
+# 2. Wire Claude Code hooks (one-time, user level)
+#    Merge hooks/claude-settings.snippet.json into ~/.claude/settings.json
+#    under "hooks". See `Configure Agents` below for details.
+
+# 3. Install the one-click .app launcher
+vibesignal install-launcher
+#    Spotlight: Cmd+Space, type 'VibeSignal', press Enter.
+#    Or drag ~/Applications/VibeSignal.app to the Dock.
+
+# 4. Install login autostart (also starts the widget right now)
+vibesignal install-autostart
+
+# 5. Verify
+vibesignal status            # active sessions and the resolved color
+launchctl print gui/$UID/io.github.yzhao062.vibesignal | grep -E "state|program"
+```
+
+After step 4 a small panel appears in the bottom-left of your screen. When any Claude Code session blocks for permission, the panel turns red and shows which session.
+
+**Daily lifecycle on macOS:**
+
+| Action | Command |
+|---|---|
+| Show widget on demand | Cmd+Space → `VibeSignal` → Enter (Spotlight); or `vibesignal widget &` |
+| Quit widget window | Right-click or `Control`-click header → Quit |
+| Force-kill a running widget | `pkill -f "vibesignal.widget"` |
+| Start the LaunchAgent right now (no relogin) | `launchctl kickstart gui/$UID/io.github.yzhao062.vibesignal` |
+| Disable autostart, keep launcher | `vibesignal uninstall-autostart` |
+| Re-enable autostart later | `vibesignal install-autostart` (idempotent) |
+| Remove the `.app` launcher | `vibesignal uninstall-launcher` |
+| Inspect autostart status | `launchctl print gui/$UID/io.github.yzhao062.vibesignal` |
+| Tail autostart logs | `tail /tmp/io.github.yzhao062.vibesignal.log /tmp/io.github.yzhao062.vibesignal.err` |
+| Re-pin paths after switching conda env | `vibesignal install-autostart` |
+| Manually clear stuck sessions | `vibesignal clear` (all) or `vibesignal clear --session <id>` |
 
 ## How It Works
 
