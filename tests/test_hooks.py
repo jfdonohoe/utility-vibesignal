@@ -10,6 +10,25 @@ def _claude_snippet():
     )
 
 
+def _codex_snippet():
+    return json.loads(
+        (PROJECT_ROOT / "hooks" / "codex-hooks.snippet.json").read_text(encoding="utf-8")
+    )
+
+
+def _commands(tree):
+    found = []
+    if isinstance(tree, dict):
+        if isinstance(tree.get("command"), str):
+            found.append(tree["command"])
+        for value in tree.values():
+            found.extend(_commands(value))
+    elif isinstance(tree, list):
+        for item in tree:
+            found.extend(_commands(item))
+    return found
+
+
 def test_claude_snippet_notification_splits_blocked_and_done():
     # A real permission prompt is blocked; an idle prompt (turn ended, waiting on
     # you) is done. The old flat "Notification -> blocked" caused false blocked.
@@ -33,3 +52,30 @@ def test_claude_snippet_sessionend_clears_session():
     # SessionEnd must call `end` (not `event`) so a closed session leaves at once.
     sessionend = json.dumps(_claude_snippet()["hooks"]["SessionEnd"])
     assert "vibesignal end" in sessionend
+
+
+def test_hook_snippets_use_quiet_vibesignal_commands():
+    for snippet in (_claude_snippet(), _codex_snippet()):
+        commands = _commands(snippet)
+        assert commands
+        for command in commands:
+            assert "vibesignal" in command
+            assert "signal_light" not in command
+            assert "--quiet" in command
+
+
+def test_codex_snippet_maps_turn_states():
+    hooks = _codex_snippet()["hooks"]
+    assert "working" in json.dumps(hooks["UserPromptSubmit"])
+    assert "working" in json.dumps(hooks["PostToolUse"])
+    assert "blocked" in json.dumps(hooks["PermissionRequest"])
+    assert "done" in json.dumps(hooks["Stop"])
+
+
+def test_codex_notify_fallback_uses_quiet_vibesignal():
+    text = (PROJECT_ROOT / "hooks" / "codex-notify.py").read_text(encoding="utf-8")
+    assert "signal_light" not in text
+    assert '"vibesignal"' in text
+    assert '"--quiet"' in text
+    assert "stdout=subprocess.DEVNULL" in text
+    assert "stderr=subprocess.DEVNULL" in text

@@ -197,7 +197,7 @@ The widget pins to the bottom-left of the work area on first launch, then become
 
 ### Claude Code
 
-Merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"`. The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL.
+Merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"`. The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL. The snippet uses `--quiet` so hook stdout stays empty for strict hook parsers.
 
 The `vibesignal` command reads the session id from the hook's stdin JSON, so one light tracks every concurrent session.
 
@@ -206,7 +206,20 @@ The `vibesignal` command reads the session id from the hook's stdin JSON, so one
 
 ### Codex
 
-The state store is agent-agnostic: events carry an `--agent` tag. Codex points at the same command with `--agent codex`, so one light covers both. See [`hooks/codex-hooks.md`](hooks/codex-hooks.md) for the mapping (Codex's `notify` program or 0.130+ hooks system).
+The state store is agent-agnostic: events carry an `--agent` tag. Codex points at the same command with `--agent codex`, so one light covers both.
+
+Modern Codex: merge [`hooks/codex-hooks.snippet.json`](hooks/codex-hooks.snippet.json) into `~/.codex/hooks.json`, then trust the hooks once via `/hooks` in Codex. The commands use `--quiet` because Codex hook types can parse stdout as JSON. If the hook shell cannot find `vibesignal`, replace the command prefix with the absolute interpreter form, for example `C:/Users/<you>/miniforge3/envs/py312/python.exe -m vibesignal`.
+
+Older Codex or completion-only fallback: run [`hooks/codex-notify.py`](hooks/codex-notify.py) with the Python interpreter that has VibeSignal installed and point `~/.codex/config.toml` at it:
+
+```toml
+notify = [
+  'C:\Users\<you>\miniforge3\envs\py312\python.exe',
+  'C:\path\to\vibesignal\hooks\codex-notify.py',
+]
+```
+
+See [`hooks/codex-hooks.md`](hooks/codex-hooks.md) for the event mapping and version notes.
 
 ## Test Without Hardware
 
@@ -214,6 +227,7 @@ The light arrives later than the code does, so the whole pipeline is observable 
 
 ```bash
 vibesignal event --agent claude --state working
+vibesignal event --agent claude --state working --quiet  # hook-safe, no stdout
 vibesignal status        # active sessions and the resolved color
 vibesignal off           # clear all sessions
 ```
@@ -296,7 +310,9 @@ vibesignal/
 |   |-- __main__.py     # CLI invoked by hooks
 |-- hooks/
 |   |-- claude-settings.snippet.json
+|   |-- codex-hooks.snippet.json
 |   |-- codex-hooks.md
+|   |-- codex-notify.py
 |-- tests/
     |-- test_resolve.py
     |-- test_store.py

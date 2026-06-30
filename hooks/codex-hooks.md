@@ -4,8 +4,8 @@ The signal light is agent-agnostic. Every state event carries an `--agent` tag, 
 Codex drives the same light as Claude Code by calling:
 
 ```bash
-vibesignal event --agent codex --state working
-vibesignal event --agent codex --state blocked
+vibesignal event --agent codex --state working --quiet
+vibesignal event --agent codex --state blocked --quiet
 ```
 
 `needs_input` is still accepted as an alias for `blocked`, so a v1 wrapper keeps
@@ -57,8 +57,17 @@ Codex 0.130+ exposes a hooks system that fires on the same per-turn events Claud
 Code uses, configured in `~/.codex/config.toml` or an isolated `~/.codex/hooks.json`.
 Map `UserPromptSubmit` and `PostToolUse` to `working`, `PermissionRequest` to
 `blocked`, and `Stop` to `done` for the same live states as the Claude side. Trust the
-hooks once via `/hooks` in a Codex session. Keep the `notify` program above as a
-completion-only fallback for older Codex builds.
+hooks once via `/hooks` in a Codex session. Use `--quiet` for Codex hooks: some hook
+types parse stdout as JSON, so normal human-readable status text causes an invalid
+hook output error.
+
+The tracked snippet is [`codex-hooks.snippet.json`](codex-hooks.snippet.json). Merge it
+into `~/.codex/hooks.json`. If `vibesignal` is not on the hook shell's `PATH`, replace
+the command prefix with an absolute interpreter form such as
+`C:/Users/<you>/miniforge3/envs/py312/python.exe -m vibesignal`.
+
+Keep [`codex-notify.py`](codex-notify.py) as a completion-only fallback for older Codex
+builds or for environments where the hooks system is disabled.
 
 ## SessionEnd Asymmetry
 

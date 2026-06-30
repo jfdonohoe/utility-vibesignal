@@ -91,8 +91,9 @@ def cmd_event(args) -> int:
         with lock.file_lock(store.lock_path()):
             store.record(agent=args.agent, session=session, state=args.state, project=project)
             state, color = _apply_light()
-        print(f"[vibesignal] {args.agent}/{session}: {args.state} -> {state} {color}")
-    except Exception as exc:  # a signal-light bug must never break the agent
+        if not args.quiet:
+            print(f"[vibesignal] {args.agent}/{session}: {args.state} -> {state} {color}")
+    except Exception as exc:  # a VibeSignal bug must never break the agent
         print(f"[vibesignal] non-fatal: {exc}", file=sys.stderr)
     return 0
 
@@ -139,13 +140,15 @@ def cmd_end(args) -> int:
         if not session:
             # Unlike `event`, `end` must not fall back to "default": a SessionEnd
             # with no id would otherwise clear an unrelated default-bucket session.
-            print(f"[vibesignal] end ignored for {args.agent}: no session id")
+            if not args.quiet:
+                print(f"[vibesignal] end ignored for {args.agent}: no session id")
             return 0
         with lock.file_lock(store.lock_path()):
             store.clear(agent=args.agent, session=session)
             _apply_light()
-        print(f"[vibesignal] ended {args.agent}/{session}")
-    except Exception as exc:  # a signal-light bug must never break the agent
+        if not args.quiet:
+            print(f"[vibesignal] ended {args.agent}/{session}")
+    except Exception as exc:  # a VibeSignal bug must never break the agent
         print(f"[vibesignal] non-fatal: {exc}", file=sys.stderr)
     return 0
 
@@ -215,6 +218,7 @@ def main(argv: list | None = None) -> int:
     )
     p_event.add_argument("--session", default=None, help="session id (else from hook stdin)")
     p_event.add_argument("--project", default=None, help="project tag (else from cwd)")
+    p_event.add_argument("--quiet", action="store_true", help="suppress normal stdout for strict hook parsers")
     p_event.set_defaults(func=cmd_event)
 
     p_status = sub.add_parser("status", help="print active sessions and the resolved color")
@@ -231,6 +235,7 @@ def main(argv: list | None = None) -> int:
     p_end = sub.add_parser("end", help="clear one ended session (id from hook stdin)")
     p_end.add_argument("--agent", required=True, help="agent name, e.g. claude")
     p_end.add_argument("--session", default=None, help="session id (else from hook stdin)")
+    p_end.add_argument("--quiet", action="store_true", help="suppress normal stdout for strict hook parsers")
     p_end.set_defaults(func=cmd_end)
 
     p_watch = sub.add_parser("watch", help="live multi-session panel (foreground viewer)")

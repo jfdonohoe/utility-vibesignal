@@ -46,6 +46,17 @@ def test_event_reads_session_from_stdin(tmp_path):
     assert "claude/xyz" in proc.stdout
 
 
+def test_event_quiet_suppresses_normal_stdout(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude",
+         "--state", "working", "--quiet"],
+        input='{"session_id":"xyz","cwd":"C:/p/proj"}',
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
 def test_apply_light_does_not_cache_on_failed_write(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
     monkeypatch.setattr(cli.light, "set_color", lambda rgb: False)  # simulate no device
@@ -124,6 +135,21 @@ def test_end_clears_only_the_ending_session(tmp_path):
     )
     assert "claude/s2" in status.stdout      # the other session stays
     assert "claude/s1" not in status.stdout  # the ended one is cleared
+
+
+def test_end_quiet_suppresses_normal_stdout(tmp_path):
+    env = _child_env(tmp_path)
+    subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude",
+         "--state", "blocked", "--session", "s1"],
+        input="{}", capture_output=True, text=True, timeout=10, env=env,
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "end", "--agent", "claude", "--quiet"],
+        input='{"session_id":"s1"}', capture_output=True, text=True, timeout=10, env=env,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
 
 
 def test_end_without_session_id_is_noop(tmp_path):
