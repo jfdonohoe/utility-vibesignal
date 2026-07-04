@@ -93,6 +93,30 @@ def test_event_accepts_blocked_done_and_alias(tmp_path):
         assert proc.returncode == 0, f"state {state} rejected"
 
 
+def test_event_quiet_suppresses_stdout(tmp_path):
+    # Codex parses a hook's stdout as JSON, so --quiet must yield EMPTY stdout
+    # while still recording state. Without it, the status line prints.
+    env = _child_env(tmp_path)
+    quiet = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "codex",
+         "--state", "working", "--session", "s", "--quiet"],
+        input="{}", capture_output=True, text=True, timeout=10, env=env,
+    )
+    assert quiet.returncode == 0
+    assert quiet.stdout == ""
+    verbose = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "codex",
+         "--state", "working", "--session", "s2"],
+        input="{}", capture_output=True, text=True, timeout=10, env=env,
+    )
+    assert "[vibesignal]" in verbose.stdout
+    status = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "status"],
+        capture_output=True, text=True, timeout=10, env=env,
+    )
+    assert "codex/s" in status.stdout  # state recorded despite the silence
+
+
 def test_watch_once_renders_active_session(tmp_path):
     env = _child_env(tmp_path)
     subprocess.run(

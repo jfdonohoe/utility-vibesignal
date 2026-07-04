@@ -91,6 +91,8 @@ def cmd_event(args) -> int:
         with lock.file_lock(store.lock_path()):
             store.record(agent=args.agent, session=session, state=args.state, project=project)
             state, color = _apply_light()
+        # --quiet keeps stdout empty for hosts that parse hook stdout as JSON
+        # (Codex rejects a plain status line from a PostToolUse hook).
         if not args.quiet:
             print(f"[vibesignal] {args.agent}/{session}: {args.state} -> {state} {color}")
     except Exception as exc:  # a VibeSignal bug must never break the agent
@@ -206,6 +208,25 @@ def cmd_uninstall_autostart(args) -> int:
     return 0
 
 
+def cmd_install_hooks(args) -> int:
+    from . import installer
+    path = installer.install_hooks(agent=args.agent)
+    print(f"[vibesignal] wired {args.agent} hooks into {path}")
+    if args.agent == "codex":
+        print("Trust the new hooks once via /hooks in a Codex session, then restart it.")
+    else:
+        print("Takes effect on the next Claude Code session (or a settings reload).")
+    print("Re-run after switching env to re-pin the path.")
+    return 0
+
+
+def cmd_uninstall_hooks(args) -> int:
+    from . import installer
+    removed = installer.uninstall_hooks(agent=args.agent)
+    print(f"[vibesignal] {'removed' if removed else 'no'} {args.agent} hooks")
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vibesignal")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -274,6 +295,26 @@ def main(argv: list | None = None) -> int:
         help="remove login autostart",
     )
     p_uninstall_autostart.set_defaults(func=cmd_uninstall_autostart)
+
+    p_install_hooks = sub.add_parser(
+        "install-hooks",
+        help="wire agent hooks into the settings file, absolute path pinned (all platforms)",
+    )
+    p_install_hooks.add_argument(
+        "--agent", default="claude", choices=["claude", "codex"],
+        help="which agent's settings file to wire (default: claude)",
+    )
+    p_install_hooks.set_defaults(func=cmd_install_hooks)
+
+    p_uninstall_hooks = sub.add_parser(
+        "uninstall-hooks",
+        help="remove vibesignal hooks from an agent settings file",
+    )
+    p_uninstall_hooks.add_argument(
+        "--agent", default="claude", choices=["claude", "codex"],
+        help="which agent's settings file to clean (default: claude)",
+    )
+    p_uninstall_hooks.set_defaults(func=cmd_uninstall_hooks)
 
     args = parser.parse_args(argv)
     return args.func(args)

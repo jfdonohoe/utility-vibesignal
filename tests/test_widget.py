@@ -78,3 +78,63 @@ def test_widget_constructs_and_renders_one_tick(monkeypatch):
         assert str(w.root.cget("bg")) == "#dc2626"
     finally:
         w.root.destroy()
+
+
+def test_keep_on_top_runs_each_tick(monkeypatch):
+    # The macOS always-on-top fix hinges on re-asserting topmost every tick, so
+    # lock in that _tick calls _keep_on_top (the synchronous first tick counts).
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    calls = {"n": 0}
+    monkeypatch.setattr(widget.Widget, "_keep_on_top",
+                        lambda self: calls.__setitem__("n", calls["n"] + 1))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        assert calls["n"] >= 1
+    finally:
+        w.root.destroy()
+
+
+def test_macos_float_level_silent_without_pyobjc(monkeypatch):
+    # On a machine without the `macos` extra, the native level-raise must be a
+    # no-op that never raises, so the stdlib -topmost path is the only effect.
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        w._macos_float_level()  # must not raise regardless of pyobjc presence
+    finally:
+        w.root.destroy()
+
+
+def test_keep_on_top_noop_off_darwin(monkeypatch):
+    # Off macOS, _keep_on_top must return immediately without touching the native
+    # float level -- no per-tick lift()/z-order churn on Windows/Linux, where the
+    # startup -topmost already holds.
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        monkeypatch.setattr("sys.platform", "linux")
+        called = {"n": 0}
+        monkeypatch.setattr(w, "_macos_float_level",
+                            lambda: called.__setitem__("n", called["n"] + 1) or True)
+        w._keep_on_top()
+        assert called["n"] == 0
+    finally:
+        w.root.destroy()

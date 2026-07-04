@@ -11,6 +11,19 @@ vibesignal event --agent codex --state blocked --quiet
 `needs_input` is still accepted as an alias for `blocked`, so a v1 wrapper keeps
 working.
 
+## Quick Setup
+
+One command wires everything, with the Codex-correct events and the absolute
+path pinned (so a minimal hook `PATH` cannot break it):
+
+```bash
+vibesignal install-hooks --agent codex
+```
+
+It merges the per-turn hooks into `~/.codex/hooks.json`, preserving any hooks you
+already have. Then trust them once via `/hooks` in a Codex session and restart it.
+The rest of this document explains the mapping that command applies.
+
 The intended mapping mirrors the Claude Code side:
 
 | Codex situation | State |
@@ -69,18 +82,14 @@ the command prefix with an absolute interpreter form such as
 Keep [`codex-notify.py`](codex-notify.py) as a completion-only fallback for older Codex
 builds or for environments where the hooks system is disabled.
 
-## SessionEnd Asymmetry
+## SessionEnd
 
-Claude Code fires a `SessionEnd` hook, so a closed Claude session calls
-`vibesignal end --agent claude` and leaves the panel at once (see
-`hooks/claude-settings.snippet.json`). Codex, as of 0.135, has no `SessionEnd` event,
-so there is no matching `end` call for Codex. A closed Codex session is not cleared
-explicitly. If the last recorded Codex state is `done`, it falls off the panel
-through the 90s done fade; if it exits while `working`, after the 10-minute working
-TTL; if it exits while `blocked` or `error`, it stays visible until the 8h backstop,
-because Codex has no session-close event to clear it sooner. This asymmetry is
-deliberate: add a Codex `end` hook only if a later Codex version gains a
-session-close event.
+Codex has no `SessionEnd` hook event (verified against the official Codex hooks
+docs), so `install-hooks --agent codex` does NOT wire one. Unlike the Claude side,
+a closed Codex session has no session-close hook to clear it at once; it ages out
+by its per-state lifetime instead -- `done` through the 90s fade, `working` after
+the 10-minute TTL, `blocked` or `error` at the 8h backstop. Add a Codex `end` hook
+only if a later Codex version gains a session-close event.
 
 This keeps the Claude Code and Codex paths on one light and one state store, which
 satisfies the cross-agent requirement: the function works under role reversal or

@@ -73,6 +73,7 @@ pip install vibesignal            # Windows
 **2. Set up** (identical on macOS and Windows):
 
 ```bash
+vibesignal install-hooks       # wire agent hooks (absolute path pinned; add --agent codex for Codex)
 vibesignal install-launcher    # macOS: Spotlight-able .app; Windows: Start menu + Desktop shortcut
 vibesignal install-autostart   # starts the widget now and at every login
 vibesignal status              # verify: active sessions + resolved color
@@ -94,7 +95,9 @@ After `install-autostart`, a small panel appears in the bottom-left of your scre
 | Remove the `.app` launcher | `vibesignal uninstall-launcher` |
 | Inspect autostart status | `launchctl print gui/$UID/io.github.yzhao062.vibesignal` |
 | Tail autostart logs | `tail /tmp/io.github.yzhao062.vibesignal.log /tmp/io.github.yzhao062.vibesignal.err` |
-| Re-pin paths after switching conda env | `vibesignal install-autostart` |
+| Wire/re-pin agent hooks (idempotent) | `vibesignal install-hooks` (add `--agent codex` for Codex) |
+| Remove agent hooks | `vibesignal uninstall-hooks` (add `--agent codex` for Codex) |
+| Re-pin paths after switching conda env | `vibesignal install-autostart && vibesignal install-hooks` |
 | Manually clear stuck sessions | `vibesignal clear` (all) or `vibesignal clear --session <id>` |
 
 </details>
@@ -180,6 +183,8 @@ Foreground viewer (Ctrl-C to stop), not a daemon. `vibesignal watch --once` rend
 
 Cross-platform Tk panel, always-on-top, draggable by the header. Right-click to quit; on macOS, `Control`-click also opens the Quit menu.
 
+The panel re-asserts its always-on-top level on every refresh, because macOS drops a borderless window behind other apps when they activate. Install the `macos` extra (`pip install 'vibesignal[macos]'`) for the sturdier native path: it pins the window to a floating level and lets it follow you across Spaces, and it also gives the accurate Dock-aware placement.
+
 ```bash
 # macOS: open via Spotlight ("VibeSignal") after install-launcher, or:
 vibesignal widget &
@@ -197,7 +202,15 @@ The widget pins to the bottom-left of the work area on first launch, then become
 
 ### Claude Code
 
-Merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"`. The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL. The snippet uses `--quiet` so hook stdout stays empty for strict hook parsers.
+The one-command path (recommended):
+
+```bash
+vibesignal install-hooks
+```
+
+This merges the six hook entries into `~/.claude/settings.json` under `"hooks"`, preserves any hooks you already have, and **pins the absolute path** of the `vibesignal` you ran it with. Pinning is the whole point: Claude Code runs each hook command in a short-lived shell whose `PATH` need not include the environment vibesignal is installed in (a conda env on macOS is the classic trap), so a bare `vibesignal` would fail with `command not found` and nothing would ever record. Re-run after switching env to re-pin; `vibesignal uninstall-hooks` removes them again.
+
+To wire it by hand instead, merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"` and **replace the bare `vibesignal` with its absolute path** (`which vibesignal`). The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL. The snippet's commands already pass `--quiet` so hook stdout stays empty for strict parsers.
 
 The `vibesignal` command reads the session id from the hook's stdin JSON, so one light tracks every concurrent session.
 
@@ -206,11 +219,15 @@ The `vibesignal` command reads the session id from the hook's stdin JSON, so one
 
 ### Codex
 
-The state store is agent-agnostic: events carry an `--agent` tag. Codex points at the same command with `--agent codex`, so one light covers both.
+The state store is agent-agnostic: events carry an `--agent` tag, so one light covers Claude Code and Codex at once. Wire Codex the same one-command way:
 
-Modern Codex: merge [`hooks/codex-hooks.snippet.json`](hooks/codex-hooks.snippet.json) into `~/.codex/hooks.json`, then trust the hooks once via `/hooks` in Codex. The commands use `--quiet` because Codex hook types can parse stdout as JSON. If the hook shell cannot find `vibesignal`, replace the command prefix with the absolute interpreter form, for example `C:/Users/<you>/miniforge3/envs/py312/python.exe -m vibesignal`.
+```bash
+vibesignal install-hooks --agent codex   # writes ~/.codex/hooks.json, absolute path pinned
+```
 
-Older Codex or completion-only fallback: run [`hooks/codex-notify.py`](hooks/codex-notify.py) with the Python interpreter that has VibeSignal installed and point `~/.codex/config.toml` at it:
+Then trust the new hooks once via `/hooks` in a Codex session and restart it. Codex uses its own hook vocabulary — `PermissionRequest` for the blocked signal (Claude uses `Notification`), and no `SessionEnd`, so a closed Codex session ages out by its TTL rather than clearing at once.
+
+To wire it by hand instead, merge [`hooks/codex-hooks.snippet.json`](hooks/codex-hooks.snippet.json) into `~/.codex/hooks.json` and trust via `/hooks`; the commands use `--quiet` because Codex hook types can parse stdout as JSON. If the hook shell cannot find `vibesignal`, use the absolute interpreter form, e.g. `C:/Users/<you>/miniforge3/envs/py312/python.exe -m vibesignal`. For older Codex (completion-only fallback), run [`hooks/codex-notify.py`](hooks/codex-notify.py) with the Python interpreter that has VibeSignal installed and point `~/.codex/config.toml` at it:
 
 ```toml
 notify = [

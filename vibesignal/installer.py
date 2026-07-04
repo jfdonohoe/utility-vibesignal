@@ -17,14 +17,19 @@ helpers refuse there; ``vibesignal widget &`` plus a ``~/.config/autostart/``
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import xml.sax.saxutils
 from pathlib import Path
+
+from . import lock
 
 LAUNCH_AGENT_LABEL = "io.github.yzhao062.vibesignal"
 APP_NAME = "VibeSignal.app"
@@ -401,3 +406,323 @@ def uninstall_autostart() -> bool:
         return _windows_uninstall_autostart()
     _check_supported()
     return _macos_uninstall_autostart()
+
+
+# -- Agent hook installers (cross-platform) --------------------------------
+#
+# The launcher/autostart helpers above pin the absolute vibesignal path so a
+# LaunchAgent's empty PATH cannot break them. Hooks have the same problem:
+# Claude Code and Codex run each hook command in a short-lived shell whose PATH
+# need not contain the env vibesignal was installed into (a conda env on macOS
+# is the common trap), yet the shipped snippet uses a bare ``vibesignal`` and
+# leaves the pinning to a hand-merge the user may skip -- so a hook silently
+# fails with "command not found" and nothing ever records. These helpers close
+# that gap: they merge the hook block and pin ``vibesignal_args()`` the same
+# way, so ``pip install`` + ``install-hooks`` needs no PATH surgery.
+
+def claude_settings_path() -> Path:
+    return Path.home() / ".claude" / "settings.json"
+
+
+def codex_hooks_path() -> Path:
+    return Path.home() / ".codex" / "hooks.json"
+
+
+def _agent_settings_path(agent: str) -> Path:
+    if agent == "claude":
+        return claude_settings_path()
+    if agent == "codex":
+        return codex_hooks_path()
+    raise SystemExit(
+        f"vibesignal: unknown agent {agent!r}; expected 'claude' or 'codex'."
+    )
+
+
+def _hook_command(args: list[str], tail: list[str]) -> str:
+    """Join the pinned argv with a hook tail into one shell command string.
+
+    Each token is shlex-quoted so a vibesignal path with a space survives the
+    round-trip through the settings JSON and the hook shell.
+    """
+    return " ".join(shlex.quote(a) for a in [*args, *tail])
+
+
+def agent_hooks_spec(args: list[str], agent: str) -> dict:
+    """The vibesignal hook block for one agent, ready to merge.
+
+    Claude Code and Codex use DIFFERENT hook vocabularies, so the spec is
+    per-agent (verified against the official Codex hooks docs, developers.
+    openai.com/codex/hooks): Codex's approval/input event is ``PermissionRequest``
+    (Claude uses ``Notification`` with ``permission_prompt`` / ``idle_prompt``
+    matchers), and Codex has no ``StopFailure`` or ``SessionEnd``. A closed Codex
+    session therefore has no session-close hook and ages out by its per-state TTL
+    instead of clearing at once; ``Stop`` still carries the "your move" (done)
+    signal. Both agents share ``UserPromptSubmit`` / ``PostToolUse`` / ``Stop``.
+    """
+    def cmd(*tail: str) -> dict:
+        return {"type": "command", "command": _hook_command(args, list(tail))}
+
+    if agent == "codex":
+        # Codex parses a hook's stdout as JSON, so every Codex command passes
+        # --quiet to keep stdout empty (the state is still recorded); without it
+        # Codex reports "hook returned invalid post-tool-use JSON output".
+        return {
+            "UserPromptSubmit": [
+                {"hooks": [cmd("event", "--agent", agent, "--state", "working", "--quiet")]},
+            ],
+            "PostToolUse": [
+                {"matcher": "*", "hooks": [cmd("event", "--agent", agent, "--state", "working", "--quiet")]},
+            ],
+            "PermissionRequest": [
+                {"matcher": "*", "hooks": [cmd("event", "--agent", agent, "--state", "blocked", "--quiet")]},
+            ],
+            "Stop": [
+                {"hooks": [cmd("event", "--agent", agent, "--state", "done", "--quiet")]},
+            ],
+        }
+
+    return {
+        "UserPromptSubmit": [
+            {"hooks": [cmd("event", "--agent", agent, "--state", "working")]},
+        ],
+        "PostToolUse": [
+            {"matcher": "*", "hooks": [cmd("event", "--agent", agent, "--state", "working")]},
+        ],
+        "Notification": [
+            {"matcher": "permission_prompt",
+             "hooks": [cmd("event", "--agent", agent, "--state", "blocked")]},
+            {"matcher": "idle_prompt",
+             "hooks": [cmd("event", "--agent", agent, "--state", "done")]},
+        ],
+        "Stop": [
+            {"hooks": [cmd("event", "--agent", agent, "--state", "done")]},
+        ],
+        "StopFailure": [
+            {"hooks": [cmd("event", "--agent", agent, "--state", "done")]},
+        ],
+        "SessionEnd": [
+            {"hooks": [cmd("end", "--agent", agent)]},
+        ],
+    }
+
+
+def _argv_is_vibesignal(argv: list[str]) -> bool:
+    """True if argv is a command THIS installer generates: the vibesignal
+    console script (or ``<python> -m vibesignal``) invoking ``event``/``end`` with
+    an ``--agent`` tag. Matching this shape -- not a bare "vibesignal" substring --
+    avoids deleting a user's unrelated hook whose command merely contains the word
+    (e.g. /opt/vibesignal-notify/run.sh)."""
+    if not argv:
+        return False
+    if Path(argv[0]).name.lower() in {"vibesignal", "vibesignal.exe"}:
+        tail = argv[1:]
+    elif argv[1:3] == ["-m", "vibesignal"]:
+        # Module form: key on the `-m vibesignal` shape, NOT a python-basename
+        # allow-list, so a versioned interpreter (python3.12, pypy3, ...) still
+        # round-trips through uninstall instead of leaving a stale hook behind.
+        tail = argv[3:]
+    else:
+        return False
+    return len(tail) >= 2 and tail[0] in {"event", "end"} and "--agent" in tail
+
+
+def _hook_is_vibesignal(h: object) -> bool:
+    """True if a single hook handler's command is one this installer wrote."""
+    if not isinstance(h, dict):
+        return False
+    command = h.get("command")
+    if not isinstance(command, str):
+        return False
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return False
+    return _argv_is_vibesignal(argv)
+
+
+def _entry_is_vibesignal(entry: object) -> bool:
+    """True if a hook entry contains any command this installer wrote."""
+    if not isinstance(entry, dict):
+        return False
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):  # tolerate malformed entry, do not crash
+        return False
+    return any(_hook_is_vibesignal(h) for h in hooks)
+
+
+def _strip_vibesignal_from_entry(entry: object) -> tuple:
+    """Filter one hook entry at the HANDLER level: drop our commands, keep the
+    user's. Returns (kept_entry_or_None, removed_any); None when no handler is
+    left. Handler-level (not whole-entry) filtering is what preserves a foreign
+    command a user placed in the same matcher group's hooks list as one of ours.
+    """
+    if not isinstance(entry, dict):
+        return entry, False
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return entry, False
+    kept = [h for h in hooks if not _hook_is_vibesignal(h)]
+    removed = len(kept) != len(hooks)
+    if not kept:
+        return None, removed
+    if removed:
+        entry = {**entry, "hooks": kept}
+    return entry, removed
+
+
+def _load_settings_obj(path: Path) -> dict:
+    """Load a settings JSON object, or {} when the file is absent.
+
+    Reads as ``utf-8-sig`` so a leading BOM (some editors add one) is tolerated
+    rather than rejected. A present file that is unparseable, or whose JSON root
+    is not an object, is a hard error rather than a silent {}: overwriting a real
+    settings file we could not read or that has an unexpected shape would destroy
+    the user's other config.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise SystemExit(
+            f"vibesignal: cannot read {path} ({exc}); fix or move it, then retry."
+        )
+    if not isinstance(data, dict):
+        raise SystemExit(
+            f"vibesignal: {path} is not a JSON object; refusing to overwrite it."
+        )
+    return data
+
+
+def _strip_vibesignal_hooks(hooks: dict) -> bool:
+    """Remove vibesignal handlers across EVERY event in a hooks dict, at the
+    handler level. Foreign siblings are kept; an emptied entry is dropped and an
+    emptied event key is removed. Returns True iff anything was removed."""
+    removed = False
+    for event in list(hooks.keys()):
+        entries = hooks[event]
+        if not isinstance(entries, list):
+            continue
+        new_entries = []
+        for e in entries:
+            kept_e, rem = _strip_vibesignal_from_entry(e)
+            removed = removed or rem
+            if kept_e is not None:
+                new_entries.append(kept_e)
+        if new_entries:
+            hooks[event] = new_entries
+        else:
+            del hooks[event]
+    return removed
+
+
+def _merge_hooks(settings: dict, spec: dict) -> None:
+    """Merge spec into settings['hooks'] in place, idempotently and convergently.
+
+    First strip ALL prior vibesignal handlers across every event -- not just the
+    events in the new spec -- so a re-install after the agent's event set changed
+    (e.g. old Codex Notification / SessionEnd entries from before the schema fix)
+    leaves no orphans. Foreign hooks, including a command that shares a matcher
+    group with one of ours, are preserved. Then append the fresh block.
+    """
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    _strip_vibesignal_hooks(hooks)
+    for event, entries in spec.items():
+        existing = hooks.get(event)
+        existing = existing if isinstance(existing, list) else []
+        hooks[event] = existing + entries
+    settings["hooks"] = hooks
+
+
+def _strip_hooks(settings: dict) -> bool:
+    """Remove only vibesignal commands from settings['hooks'] in place, at the
+    handler level so a foreign command sharing a matcher group survives. Returns
+    True iff something was removed; an emptied hooks object is dropped so
+    uninstall leaves no residue."""
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    removed = _strip_vibesignal_hooks(hooks)
+    if hooks:
+        settings["hooks"] = hooks
+    else:
+        settings.pop("hooks", None)
+    return removed
+
+
+def _backup_once(path: Path) -> None:
+    """Copy path to ``<name>.bak-vibesignal`` once, preserving the pristine
+    pre-vibesignal file across repeated installs."""
+    backup = path.parent / (path.name + ".bak-vibesignal")
+    if path.exists() and not backup.exists():
+        shutil.copy2(path, backup)
+
+
+def _settings_lock_path(path: Path) -> Path:
+    return path.parent / f".{path.name}.vibesignal.lock"
+
+
+def _write_settings(path: Path, settings: dict) -> None:
+    """Atomically write settings, preserving a symlink target and file mode.
+
+    store._atomic_write is for private state files; a user-managed settings file
+    needs two extra guarantees. (1) If it is a dotfiles symlink, write THROUGH to
+    the real target instead of replacing the link with a standalone regular file
+    (os.replace over the link name would sever it and silently diverge from the
+    dotfiles repo). (2) Preserve the existing mode rather than narrowing to
+    mkstemp's 0600, so a deliberately group-readable settings file keeps its bits.
+    """
+    target = path.resolve() if path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    mode = None
+    if target.exists():
+        with contextlib.suppress(OSError):
+            mode = stat.S_IMODE(target.stat().st_mode)
+    text = json.dumps(settings, indent=2) + "\n"
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".tmp-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def install_hooks(agent: str = "claude") -> Path:
+    """Merge the vibesignal hook block for `agent` and pin the absolute path.
+
+    Cross-platform. Idempotent: re-running re-pins ``vibesignal_args()`` and
+    never double-adds. Returns the settings file that was written.
+    """
+    args = vibesignal_args()
+    path = _agent_settings_path(agent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Serialize the read-modify-write so a concurrent settings edit (the agent UI
+    # toggling a setting, or a second install-hooks) cannot clobber this one.
+    with lock.file_lock(_settings_lock_path(path)):
+        settings = _load_settings_obj(path)
+        _backup_once(path)
+        _merge_hooks(settings, agent_hooks_spec(args, agent))
+        _write_settings(path, settings)
+    return path
+
+
+def uninstall_hooks(agent: str = "claude") -> bool:
+    """Remove vibesignal hooks for `agent`, leaving the user's other hooks
+    untouched. Returns True iff something was removed."""
+    path = _agent_settings_path(agent)
+    if not path.exists():
+        return False
+    with lock.file_lock(_settings_lock_path(path)):
+        settings = _load_settings_obj(path)
+        if not _strip_hooks(settings):
+            return False
+        _backup_once(path)
+        _write_settings(path, settings)
+    return True

@@ -85,6 +85,19 @@ def row_fields(row: dict, now: float):
     return glyph(state), project, agent, state, age
 
 
+def _macos_all_spaces_behavior():
+    """The NSWindow collectionBehavior mask that makes the panel appear on every
+    Space, or None without pyobjc. CanJoinAllSpaces only -- deliberately NOT
+    FullScreenAuxiliary, so the panel follows you across normal Spaces but does
+    not overlay a full-screen app (Keynote, video, a full-screen terminal Space),
+    which would have no in-app way to dismiss it."""
+    try:
+        from AppKit import NSWindowCollectionBehaviorCanJoinAllSpaces
+        return NSWindowCollectionBehaviorCanJoinAllSpaces
+    except Exception:
+        return None
+
+
 class Widget:
     def __init__(self, interval_ms: int = 1000):
         self.interval_ms = interval_ms
@@ -212,6 +225,48 @@ class Widget:
         height = self.root.winfo_height()
         self.root.geometry(f"+{left + 14}+{bottom - height - 12}")
 
+    def _keep_on_top(self):
+        """Re-assert always-on-top each tick -- macOS only.
+
+        macOS Aqua drops a borderless (overrideredirect) Tk window below other
+        applications when they activate, and a single -topmost at startup does
+        not survive that. Windows and Linux hold the startup -topmost, so a
+        per-tick re-raise there is needless z-order churn that can flicker or
+        fight another topmost window -- hence the darwin gate. When pyobjc is
+        present, pinning the native window to a floating level holds it up
+        between ticks without a re-raise; only without pyobjc do we fall back to
+        the -topmost + lift() re-assert (which is what forces the re-raise).
+        """
+        if sys.platform != "darwin":
+            return
+        if self._macos_float_level():
+            return
+        try:
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+        except tk.TclError:
+            pass
+
+    def _macos_float_level(self) -> bool:
+        """Pin the native NSWindow to a floating level so the panel stays above
+        normal windows and follows you across Spaces. Returns True if pyobjc was
+        available and the level was set, False otherwise (the caller then uses the
+        stdlib -topmost + lift() fallback). Install the ``macos`` extra for this
+        path."""
+        try:
+            from AppKit import NSApplication, NSFloatingWindowLevel
+        except Exception:
+            return False
+        behavior = _macos_all_spaces_behavior()
+        try:
+            for win in NSApplication.sharedApplication().windows():
+                win.setLevel_(NSFloatingWindowLevel)
+                if behavior is not None:
+                    win.setCollectionBehavior_(behavior)
+            return True
+        except Exception:
+            return False
+
     def _tick(self):
         rows = resolve.resolve_per_session()
         agg, _color = resolve.resolve_color()
@@ -262,6 +317,7 @@ class Widget:
                 cells[4].grid(row=i, column=4, sticky="e", padx=(8, 0), pady=1)
                 self._cells.extend(cells)
 
+        self._keep_on_top()
         self.root.after(self.interval_ms, self._tick)
 
     def run(self):

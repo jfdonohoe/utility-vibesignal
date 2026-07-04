@@ -8,6 +8,8 @@ subprocess wrappers (`osacompile`, `launchctl bootstrap`, and the PowerShell
 tools; those are exercised manually via the CLI rather than in unit tests.
 """
 
+import json
+
 import pytest
 
 from vibesignal import installer
@@ -300,3 +302,299 @@ def test_macos_autostart_launch_now_controls_bootstrap(monkeypatch, tmp_path):
     runs.clear()
     installer.install_autostart(launch_now=True)
     assert any("bootstrap" in cmd for cmd in runs)         # start-now
+
+
+# -- Hook installers -------------------------------------------------------
+
+
+def _all_commands(spec: dict) -> list[str]:
+    return [h["command"]
+            for entries in spec.values() for e in entries for h in e["hooks"]]
+
+
+def test_agent_hooks_spec_claude_shape():
+    spec = installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude")
+    assert set(spec) == {"UserPromptSubmit", "PostToolUse", "Notification",
+                         "Stop", "StopFailure", "SessionEnd"}
+    # PostToolUse fires on every tool (matcher "*").
+    assert spec["PostToolUse"][0]["matcher"] == "*"
+    # Notification is split into the two matchers, blocked vs done.
+    by_matcher = {e["matcher"]: e["hooks"][0]["command"] for e in spec["Notification"]}
+    assert set(by_matcher) == {"permission_prompt", "idle_prompt"}
+    assert "--state blocked" in by_matcher["permission_prompt"]
+    assert "--state done" in by_matcher["idle_prompt"]
+    # Every command is absolute-path-pinned and agent-tagged.
+    cmds = _all_commands(spec)
+    assert all(c.startswith("/env/bin/vibesignal ") for c in cmds)
+    assert all("--agent claude" in c for c in cmds)
+    # SessionEnd uses the `end` subcommand, not `event`.
+    assert "end --agent claude" in spec["SessionEnd"][0]["hooks"][0]["command"]
+
+
+def test_agent_hooks_spec_codex_tag():
+    spec = installer.agent_hooks_spec(["/env/bin/vibesignal"], "codex")
+    assert all("--agent codex" in c for c in _all_commands(spec))
+
+
+def test_hook_command_quotes_spaces():
+    cmd = installer._hook_command(
+        ["/Users/jane doe/vibesignal"], ["event", "--state", "working"])
+    assert "'/Users/jane doe/vibesignal'" in cmd
+    assert cmd.endswith("event --state working")
+
+
+def test_merge_hooks_preserves_and_is_idempotent():
+    settings = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.py"}]}]}}
+    spec = installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude")
+    installer._merge_hooks(settings, spec)
+    # Existing foreign hook survived, our block landed.
+    assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "guard.py"
+    assert len(settings["hooks"]["Stop"]) == 1
+    # Idempotent: merging again does not duplicate our entries.
+    installer._merge_hooks(settings, spec)
+    assert len(settings["hooks"]["Stop"]) == 1
+    assert len(settings["hooks"]["Notification"]) == 2
+
+
+def test_merge_hooks_keeps_foreign_entry_in_shared_event():
+    # A user's own PostToolUse entry must coexist with ours.
+    settings = {"hooks": {"PostToolUse": [
+        {"matcher": "Write", "hooks": [{"type": "command", "command": "fmt.sh"}]}]}}
+    installer._merge_hooks(
+        settings, installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude"))
+    cmds = [h["command"] for e in settings["hooks"]["PostToolUse"] for h in e["hooks"]]
+    assert "fmt.sh" in cmds
+    assert any("vibesignal" in c for c in cmds)
+
+
+def test_strip_hooks_removes_only_vibesignal():
+    original = {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.py"}]}]}
+    settings = {"hooks": json.loads(json.dumps(original))}  # deep copy
+    installer._merge_hooks(
+        settings, installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude"))
+    assert installer._strip_hooks(settings) is True
+    # Foreign hook intact; our keys gone entirely.
+    assert settings["hooks"] == original
+    # Nothing to remove the second time.
+    assert installer._strip_hooks(settings) is False
+
+
+def test_strip_hooks_drops_empty_hooks_object():
+    settings = {"hooks": {}}
+    installer._merge_hooks(
+        settings, installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude"))
+    installer._strip_hooks(settings)
+    assert "hooks" not in settings  # emptied object removed, no residue
+
+
+def test_install_and_uninstall_hooks_roundtrip(monkeypatch, tmp_path):
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"theme": "light", "hooks": {
+        "SessionStart": [{"hooks": [{"type": "command", "command": "boot.py"}]}]}}))
+    monkeypatch.setattr(installer, "claude_settings_path", lambda: settings_file)
+    monkeypatch.setattr(installer, "vibesignal_args", lambda: ["/env/bin/vibesignal"])
+
+    path = installer.install_hooks("claude")
+    assert path == settings_file
+    data = json.loads(settings_file.read_text())
+    # Unrelated keys and the foreign hook are preserved.
+    assert data["theme"] == "light"
+    assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "boot.py"
+    # Our hooks are pinned to the absolute path.
+    assert data["hooks"]["Stop"][0]["hooks"][0]["command"].startswith("/env/bin/vibesignal ")
+    # Backup captured the pristine file.
+    assert (tmp_path / "settings.json.bak-vibesignal").exists()
+
+    assert installer.uninstall_hooks("claude") is True
+    data2 = json.loads(settings_file.read_text())
+    assert "Stop" not in data2["hooks"]
+    assert data2["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "boot.py"
+    assert data2["theme"] == "light"
+
+
+def test_install_hooks_creates_missing_file(monkeypatch, tmp_path):
+    settings_file = tmp_path / "nested" / "settings.json"
+    monkeypatch.setattr(installer, "claude_settings_path", lambda: settings_file)
+    monkeypatch.setattr(installer, "vibesignal_args", lambda: ["/v/vibesignal"])
+    installer.install_hooks("claude")
+    data = json.loads(settings_file.read_text())
+    assert set(data["hooks"]) >= {"UserPromptSubmit", "Stop", "SessionEnd"}
+
+
+def test_install_hooks_codex_targets_codex_file(monkeypatch, tmp_path):
+    codex_file = tmp_path / "hooks.json"
+    monkeypatch.setattr(installer, "codex_hooks_path", lambda: codex_file)
+    monkeypatch.setattr(installer, "vibesignal_args", lambda: ["/v/vibesignal"])
+    installer.install_hooks("codex")
+    data = json.loads(codex_file.read_text())
+    assert "--agent codex" in data["hooks"]["Stop"][0]["hooks"][0]["command"]
+
+
+def test_uninstall_hooks_missing_file_is_false(monkeypatch, tmp_path):
+    monkeypatch.setattr(installer, "claude_settings_path", lambda: tmp_path / "nope.json")
+    assert installer.uninstall_hooks("claude") is False
+
+
+def test_load_settings_obj_raises_on_bad_json(tmp_path):
+    bad = tmp_path / "settings.json"
+    bad.write_text("{not json")
+    with pytest.raises(SystemExit):
+        installer._load_settings_obj(bad)
+
+
+def test_unknown_agent_rejected():
+    with pytest.raises(SystemExit):
+        installer._agent_settings_path("gemini")
+
+
+# -- Round 2 fixes: Codex schema, precise marker, settings-file safety --------
+
+
+def test_agent_hooks_spec_codex_uses_permissionrequest():
+    # Codex's approval/input event is PermissionRequest, NOT Claude's
+    # Notification/permission_prompt, and Codex has no StopFailure/SessionEnd.
+    spec = installer.agent_hooks_spec(["/env/bin/vibesignal"], "codex")
+    assert "PermissionRequest" in spec
+    assert "Notification" not in spec
+    assert "--state blocked" in spec["PermissionRequest"][0]["hooks"][0]["command"]
+    assert "StopFailure" not in spec and "SessionEnd" not in spec
+    # Claude keeps the full Claude vocabulary and does NOT use PermissionRequest.
+    claude = installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude")
+    assert "Notification" in claude and "SessionEnd" in claude
+    assert "PermissionRequest" not in claude
+
+
+def test_agent_hooks_spec_codex_is_quiet_claude_is_not():
+    # Codex parses hook stdout as JSON, so every Codex command passes --quiet.
+    codex = installer.agent_hooks_spec(["/env/bin/vibesignal"], "codex")
+    assert all(c.endswith("--quiet") for c in _all_commands(codex))
+    # Claude tolerates hook stdout, so it stays verbose (no --quiet).
+    claude = installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude")
+    assert not any("--quiet" in c for c in _all_commands(claude))
+
+
+def test_argv_is_vibesignal_shapes():
+    assert installer._argv_is_vibesignal(["/env/bin/vibesignal", "event", "--agent", "claude"]) is True
+    assert installer._argv_is_vibesignal(["/env/bin/vibesignal.exe", "end", "--agent", "codex"]) is True
+    assert installer._argv_is_vibesignal(["/py/python", "-m", "vibesignal", "event", "--agent", "x"]) is True
+    # Unrelated command that merely contains the word must NOT match.
+    assert installer._argv_is_vibesignal(["/opt/vibesignal-notify/run.sh"]) is False
+    # vibesignal invoked without event/end or without --agent is not one of ours.
+    assert installer._argv_is_vibesignal(["/env/bin/vibesignal", "off"]) is False
+    assert installer._argv_is_vibesignal(["/env/bin/vibesignal", "event", "--state", "working"]) is False
+
+
+def test_entry_is_vibesignal_ignores_unrelated_substring():
+    unrelated = {"hooks": [{"type": "command", "command": "/opt/vibesignal-notify/run.sh"}]}
+    assert installer._entry_is_vibesignal(unrelated) is False
+    ours = {"hooks": [{"type": "command",
+                       "command": "/env/bin/vibesignal event --agent claude --state working"}]}
+    assert installer._entry_is_vibesignal(ours) is True
+
+
+def test_entry_is_vibesignal_tolerates_malformed_hooks():
+    # Must not raise on null/int/str/None-in-list hook shapes (partial hand-edit).
+    assert installer._entry_is_vibesignal({"hooks": None}) is False
+    assert installer._entry_is_vibesignal({"hooks": 5}) is False
+    assert installer._entry_is_vibesignal({"hooks": [None, 3, "x"]}) is False
+    assert installer._entry_is_vibesignal("notadict") is False
+
+
+def test_uninstall_keeps_unrelated_vibesignal_substring_hook():
+    settings = {"hooks": {"PostToolUse": [
+        {"matcher": "*", "hooks": [{"type": "command", "command": "/opt/vibesignal-notify/run.sh"}]}]}}
+    installer._merge_hooks(settings, installer.agent_hooks_spec(["/env/bin/vibesignal"], "claude"))
+    installer._strip_hooks(settings)
+    cmds = [h["command"] for e in settings["hooks"].get("PostToolUse", []) for h in e["hooks"]]
+    assert "/opt/vibesignal-notify/run.sh" in cmds  # user's hook survives uninstall
+
+
+def test_write_settings_preserves_symlink_and_mode(tmp_path):
+    import os
+    import stat as stat_mod
+    real = tmp_path / "real.json"
+    real.write_text('{"a": 1}\n')
+    os.chmod(real, 0o644)
+    link = tmp_path / "link.json"
+    os.symlink(real, link)
+    installer._write_settings(link, {"b": 2})
+    # Symlink intact (not replaced by a standalone regular file); target rewritten.
+    assert link.is_symlink()
+    assert os.path.realpath(link) == str(real)
+    assert json.loads(real.read_text()) == {"b": 2}
+    # 0644 mode preserved, not narrowed to mkstemp's 0600.
+    assert stat_mod.S_IMODE(os.stat(real).st_mode) == 0o644
+
+
+def test_load_settings_obj_accepts_bom(tmp_path):
+    p = tmp_path / "settings.json"
+    p.write_text('﻿{"theme": "light"}', encoding="utf-8")
+    assert installer._load_settings_obj(p) == {"theme": "light"}
+
+
+def test_load_settings_obj_rejects_non_object_root(tmp_path):
+    # A JSON array root must not be silently replaced with {} and overwritten.
+    p = tmp_path / "settings.json"
+    p.write_text("[1, 2, 3]")
+    with pytest.raises(SystemExit):
+        installer._load_settings_obj(p)
+
+
+def test_argv_is_vibesignal_versioned_python_module_form():
+    # A versioned interpreter basename running `-m vibesignal` must still be
+    # recognized as ours, or uninstall leaves a stale hook / reinstall duplicates.
+    assert installer._argv_is_vibesignal(
+        ["/opt/homebrew/bin/python3.12", "-m", "vibesignal", "event", "--agent", "codex"]) is True
+    assert installer._argv_is_vibesignal(
+        ["/usr/bin/pypy3", "-m", "vibesignal", "end", "--agent", "claude"]) is True
+
+
+def test_strip_hooks_keeps_foreign_sibling_in_same_entry():
+    # One matcher-group entry holding BOTH a vibesignal command and a foreign one:
+    # uninstall must drop only ours and keep the foreign handler.
+    settings = {"hooks": {"Stop": [
+        {"hooks": [
+            {"type": "command", "command": "/env/bin/vibesignal event --agent claude --state done"},
+            {"type": "command", "command": "/opt/foreign.sh"},
+        ]}]}}
+    assert installer._strip_hooks(settings) is True
+    remaining = [h["command"] for e in settings["hooks"]["Stop"] for h in e["hooks"]]
+    assert remaining == ["/opt/foreign.sh"]  # foreign sibling survived
+
+
+def test_merge_hooks_keeps_foreign_sibling_in_same_entry():
+    # Re-pin must not discard a foreign sibling sharing a matcher group with ours.
+    settings = {"hooks": {"Stop": [
+        {"hooks": [
+            {"type": "command", "command": "/old/vibesignal event --agent claude --state done"},
+            {"type": "command", "command": "/opt/foreign.sh"},
+        ]}]}}
+    installer._merge_hooks(settings, installer.agent_hooks_spec(["/new/vibesignal"], "claude"))
+    stop_cmds = [h["command"] for e in settings["hooks"]["Stop"] for h in e["hooks"]]
+    assert "/opt/foreign.sh" in stop_cmds                     # foreign kept
+    assert any("/new/vibesignal" in c for c in stop_cmds)     # ours re-pinned
+    assert not any("/old/vibesignal" in c for c in stop_cmds)  # old ours removed
+
+
+def test_merge_hooks_converges_events_dropped_from_spec():
+    # A prior install left codex hooks under events the CURRENT spec no longer
+    # emits (Notification/SessionEnd, from before the schema fix). Re-install must
+    # drop those stale vibesignal handlers, not just re-pin the current event set.
+    settings = {"hooks": {
+        "Notification": [{"matcher": "permission_prompt", "hooks": [
+            {"type": "command", "command": "/old/vibesignal event --agent codex --state blocked"}]}],
+        "SessionEnd": [{"hooks": [
+            {"type": "command", "command": "/old/vibesignal end --agent codex"}]}],
+        "PostToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "/opt/foreign.sh"}]}],
+    }}
+    installer._merge_hooks(settings, installer.agent_hooks_spec(["/new/vibesignal"], "codex"))
+    hooks = settings["hooks"]
+    assert "Notification" not in hooks   # stale vibesignal-only event dropped
+    assert "SessionEnd" not in hooks     # stale vibesignal-only event dropped
+    posttool = [h["command"] for e in hooks["PostToolUse"] for h in e["hooks"]]
+    assert "/opt/foreign.sh" in posttool  # foreign sibling preserved
+    assert any(c.endswith("--quiet") and "/new/vibesignal" in c for c in posttool)
+    assert "PermissionRequest" in hooks and "Stop" in hooks  # current spec present
