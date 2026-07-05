@@ -518,14 +518,19 @@ def test_write_settings_preserves_symlink_and_mode(tmp_path):
     real.write_text('{"a": 1}\n')
     os.chmod(real, 0o644)
     link = tmp_path / "link.json"
-    os.symlink(real, link)
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted on this platform")
     installer._write_settings(link, {"b": 2})
     # Symlink intact (not replaced by a standalone regular file); target rewritten.
     assert link.is_symlink()
     assert os.path.realpath(link) == str(real)
     assert json.loads(real.read_text()) == {"b": 2}
-    # 0644 mode preserved, not narrowed to mkstemp's 0600.
-    assert stat_mod.S_IMODE(os.stat(real).st_mode) == 0o644
+    # 0644 mode preserved, not narrowed to mkstemp's 0600 -- POSIX only; Windows
+    # has no Unix mode bits (files report 0o666 and chmod only toggles read-only).
+    if os.name == "posix":
+        assert stat_mod.S_IMODE(os.stat(real).st_mode) == 0o644
 
 
 def test_load_settings_obj_accepts_bom(tmp_path):
