@@ -226,26 +226,85 @@ class Widget:
         self.root.geometry(f"+{left + 14}+{bottom - height - 12}")
 
     def _keep_on_top(self):
-        """Re-assert always-on-top each tick -- macOS only.
+        """Re-assert always-on-top each tick, on macOS and Windows.
 
-        macOS Aqua drops a borderless (overrideredirect) Tk window below other
-        applications when they activate, and a single -topmost at startup does
-        not survive that. Windows and Linux hold the startup -topmost, so a
-        per-tick re-raise there is needless z-order churn that can flicker or
-        fight another topmost window -- hence the darwin gate. When pyobjc is
-        present, pinning the native window to a floating level holds it up
-        between ticks without a re-raise; only without pyobjc do we fall back to
-        the -topmost + lift() re-assert (which is what forces the re-raise).
+        A single startup -topmost does not hold for a borderless (overrideredirect)
+        window on either OS. macOS Aqua drops it below other apps when they
+        activate. On Windows another window that later becomes topmost sits above
+        ours in the same topmost band, and re-setting Tk's -topmost to the value it
+        already has is a no-op (Tk caches the attribute), so the window stays buried
+        until something re-inserts it at the top of the band. Both are fixed by
+        re-asserting every tick. Linux window managers hold the startup -topmost, so
+        nothing is needed there and a per-tick re-raise would be needless z-order
+        churn.
+
+        macOS pins the native NSWindow floating level via pyobjc when present, else
+        the stdlib -topmost + lift() re-raise. Windows re-pins HWND_TOPMOST via
+        SetWindowPos, else the same stdlib fallback.
         """
-        if sys.platform != "darwin":
-            return
-        if self._macos_float_level():
-            return
+        if sys.platform == "darwin":
+            if self._macos_float_level():
+                return
+            self._topmost_reassert_tk()
+        elif sys.platform == "win32":
+            if self._windows_pin_topmost():
+                return
+            self._topmost_reassert_tk()
+
+    def _topmost_reassert_tk(self):
+        """Stdlib always-on-top re-assert: set -topmost and lift above siblings.
+
+        The shared fallback for macOS without pyobjc and for Windows if the native
+        SetWindowPos pin is somehow unavailable. On Windows this is weaker than the
+        pin (lift() restacks with HWND_TOP, not HWND_TOPMOST), so it is a last
+        resort there, not the primary path.
+        """
         try:
             self.root.attributes("-topmost", True)
             self.root.lift()
         except tk.TclError:
             pass
+
+    def _windows_pin_topmost(self) -> bool:
+        """Re-pin the window to the top of the Windows topmost band via SetWindowPos,
+        without stealing focus. Returns True on success, False to let the caller fall
+        back to the Tk re-assert -- and False on any non-Windows box (ctypes.windll
+        is absent there), so the method is safe to call on every platform.
+
+        Why raw SetWindowPos and not Tk's -topmost: once another window becomes
+        topmost after us it sits above ours, and re-setting -topmost to True (its
+        current value) is a Tk no-op, so it never restacks. SetWindowPos with
+        HWND_TOPMOST re-inserts us at the top of the band unconditionally.
+        SWP_NOACTIVATE keeps input focus where it is, so the panel never grabs your
+        keystrokes. GetAncestor(GA_ROOT) resolves the real top-level HWND in case Tk
+        wrapped the content window, and argtypes are pinned so a 64-bit HWND is not
+        truncated to 32 bits.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
+            GA_ROOT = 2
+            hwnd = user32.GetAncestor(self.root.winfo_id(), GA_ROOT) or self.root.winfo_id()
+            HWND_TOPMOST = wintypes.HWND(-1)
+            SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_NOACTIVATE = 0x0010
+            ok = user32.SetWindowPos(
+                hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+            )
+            return bool(ok)
+        except Exception:
+            return False
 
     def _macos_float_level(self) -> bool:
         """Pin the native NSWindow to a floating level so the panel stays above

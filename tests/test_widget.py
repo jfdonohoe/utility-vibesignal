@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from vibesignal import widget
@@ -117,10 +119,11 @@ def test_macos_float_level_silent_without_pyobjc(monkeypatch):
         w.root.destroy()
 
 
-def test_keep_on_top_noop_off_darwin(monkeypatch):
-    # Off macOS, _keep_on_top must return immediately without touching the native
-    # float level -- no per-tick lift()/z-order churn on Windows/Linux, where the
-    # startup -topmost already holds.
+def test_keep_on_top_noop_on_linux(monkeypatch):
+    # On Linux the window manager holds the startup -topmost, so _keep_on_top must
+    # do nothing: neither the macOS float path nor the Windows pin runs (a per-tick
+    # re-raise would be needless z-order churn). macOS and Windows DO re-assert --
+    # see their own tests below.
     tk = pytest.importorskip("tkinter")
     from vibesignal import resolve
     monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
@@ -131,10 +134,189 @@ def test_keep_on_top_noop_off_darwin(monkeypatch):
         pytest.skip(f"no Tk display: {exc}")
     try:
         monkeypatch.setattr("sys.platform", "linux")
-        called = {"n": 0}
+        called = {"mac": 0, "win": 0}
         monkeypatch.setattr(w, "_macos_float_level",
-                            lambda: called.__setitem__("n", called["n"] + 1) or True)
+                            lambda: called.__setitem__("mac", called["mac"] + 1) or True)
+        monkeypatch.setattr(w, "_windows_pin_topmost",
+                            lambda: called.__setitem__("win", called["win"] + 1) or True)
         w._keep_on_top()
-        assert called["n"] == 0
+        assert called == {"mac": 0, "win": 0}
     finally:
+        w.root.destroy()
+
+
+def test_keep_on_top_reasserts_topmost_on_windows(monkeypatch):
+    # The Windows fix: a one-time startup -topmost gets buried when another window
+    # later becomes topmost, so _keep_on_top must re-pin every tick. Verify the
+    # win32 branch calls the native pin and not the macOS float path.
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        monkeypatch.setattr("sys.platform", "win32")
+        calls = {"win": 0, "mac": 0}
+        monkeypatch.setattr(w, "_windows_pin_topmost",
+                            lambda: calls.__setitem__("win", calls["win"] + 1) or True)
+        monkeypatch.setattr(w, "_macos_float_level",
+                            lambda: calls.__setitem__("mac", calls["mac"] + 1) or True)
+        w._keep_on_top()
+        assert calls["win"] == 1
+        assert calls["mac"] == 0
+    finally:
+        w.root.destroy()
+
+
+def test_keep_on_top_windows_falls_back_to_tk_when_pin_fails(monkeypatch):
+    # If the native SetWindowPos pin fails (returns False), the win32 branch must
+    # fall back to the stdlib -topmost + lift() re-assert rather than give up.
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        monkeypatch.setattr("sys.platform", "win32")
+        monkeypatch.setattr(w, "_windows_pin_topmost", lambda: False)
+        fell_back = {"n": 0}
+        monkeypatch.setattr(w, "_topmost_reassert_tk",
+                            lambda: fell_back.__setitem__("n", fell_back["n"] + 1))
+        w._keep_on_top()
+        assert fell_back["n"] == 1
+    finally:
+        w.root.destroy()
+
+
+def test_windows_pin_topmost_safe_off_windows(monkeypatch):
+    # _windows_pin_topmost must never raise: on macOS / Linux CI ctypes.windll is
+    # absent, so it returns False cleanly; on Windows it returns a bool. This keeps
+    # _keep_on_top callable on every platform without a guard at the call site.
+    tk = pytest.importorskip("tkinter")
+    from vibesignal import resolve
+    monkeypatch.setattr(resolve, "resolve_per_session", lambda *a, **k: [])
+    monkeypatch.setattr(resolve, "resolve_color", lambda *a, **k: ("idle", None))
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        result = w._windows_pin_topmost()
+        assert isinstance(result, bool)
+        if sys.platform != "win32":
+            assert result is False
+    finally:
+        w.root.destroy()
+
+
+def test_windows_pin_topmost_repins_after_demotion():
+    # Real-window proof (Windows only, needs a display) of the topmost-BIT-loss mode:
+    # after the widget is demoted out of the topmost band -- simulated by forcing
+    # WS_EX_TOPMOST off, as a shell or display change can do -- _windows_pin_topmost
+    # must restore the bit. The distinct within-band burial mode (another topmost
+    # window sitting above ours while ours keeps its bit) is covered by
+    # test_windows_pin_topmost_raises_above_competing_topmost below. Exercises the
+    # real SetWindowPos path, not a mock.
+    if sys.platform != "win32":
+        pytest.skip("Windows-only: exercises the Win32 SetWindowPos topmost pin")
+    tk = pytest.importorskip("tkinter")
+    import ctypes
+    from ctypes import wintypes
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    try:
+        w.root.update_idletasks()
+        user32 = ctypes.windll.user32
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = wintypes.LONG
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        GWL_EXSTYLE, WS_EX_TOPMOST, GA_ROOT = -20, 0x0008, 2
+        hwnd = user32.GetAncestor(w.root.winfo_id(), GA_ROOT) or w.root.winfo_id()
+        # Demote: clear WS_EX_TOPMOST, as if another window took over the band.
+        HWND_NOTOPMOST = wintypes.HWND(-2)
+        user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        assert not (user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)
+        # Re-pin via the code under test, then confirm topmost is back on.
+        assert w._windows_pin_topmost() is True
+        assert user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST
+    finally:
+        w.root.destroy()
+
+
+def test_windows_pin_topmost_raises_above_competing_topmost():
+    # Real-window proof (Windows only, needs a display) of the ACTUAL reported bug:
+    # another topmost window sits above the widget while the widget keeps its topmost
+    # bit (within-band burial, not a cleared bit). Put a competing topmost window
+    # above the widget, then confirm _windows_pin_topmost raises the widget back on
+    # top. Z-order is read from EnumWindows, which returns top-level windows
+    # top-to-bottom, so "above" means "appears earlier in the enumeration".
+    if sys.platform != "win32":
+        pytest.skip("Windows-only: exercises the Win32 SetWindowPos topmost pin")
+    tk = pytest.importorskip("tkinter")
+    import ctypes
+    from ctypes import wintypes
+    try:
+        w = widget.Widget(interval_ms=10_000)
+    except tk.TclError as exc:
+        pytest.skip(f"no Tk display: {exc}")
+    comp = None
+    try:
+        w.root.update_idletasks()
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        GA_ROOT = 2
+
+        def root_hwnd(win):
+            return user32.GetAncestor(win.winfo_id(), GA_ROOT) or win.winfo_id()
+
+        def zorder_index(target):
+            # Position of target in the system top-level Z-order (0 == topmost).
+            order = []
+            proto = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+            cb = proto(lambda hwnd, _l: (order.append(hwnd) or True))
+            user32.EnumWindows(cb, 0)
+            return order.index(target) if target in order else None
+
+        # A competing borderless topmost window, then force it above the widget.
+        comp = tk.Toplevel(w.root)
+        comp.overrideredirect(True)
+        comp.attributes("-topmost", True)
+        comp.geometry("120x60+40+40")
+        comp.update_idletasks()
+        widget_hwnd, comp_hwnd = root_hwnd(w.root), root_hwnd(comp)
+        HWND_TOPMOST = wintypes.HWND(-1)
+        SWP = 0x0001 | 0x0002 | 0x0010  # NOSIZE | NOMOVE | NOACTIVATE
+        user32.SetWindowPos(comp_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP)
+
+        w_i, c_i = zorder_index(widget_hwnd), zorder_index(comp_hwnd)
+        assert w_i is not None and c_i is not None
+        assert c_i < w_i  # competitor starts above the widget
+
+        # The code under test must raise the widget back above the competitor.
+        assert w._windows_pin_topmost() is True
+        w.root.update_idletasks()
+        assert zorder_index(widget_hwnd) < zorder_index(comp_hwnd)
+    finally:
+        if comp is not None:
+            comp.destroy()
         w.root.destroy()
