@@ -89,7 +89,11 @@ def cmd_event(args) -> int:
         cwd = str(hook.get("cwd") or os.getcwd())
         project = args.project or os.path.basename(cwd.rstrip("/\\")) or None
         with lock.file_lock(store.lock_path()):
-            store.record(agent=args.agent, session=session, state=args.state, project=project)
+            # getppid(): hooks are spawned as a direct child of the long-lived
+            # agent process, not a throwaway wrapper shell, so the parent pid
+            # is a valid liveness handle for the whole session's lifetime.
+            store.record(agent=args.agent, session=session, state=args.state,
+                         project=project, pid=os.getppid())
             state, color = _apply_light()
         # --quiet keeps stdout empty for hosts that parse hook stdout as JSON
         # (Codex rejects a plain status line from a PostToolUse hook).

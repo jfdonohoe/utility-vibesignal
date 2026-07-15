@@ -17,6 +17,7 @@ import contextlib
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -64,7 +65,7 @@ def _session_path(agent: str, session: str) -> Path:
 
 
 def record(agent: str, session: str, state: str, project: str | None = None,
-           now: float | None = None) -> None:
+           now: float | None = None, pid: int | None = None) -> None:
     now = time.time() if now is None else now
     payload = {
         "agent": agent,
@@ -72,8 +73,28 @@ def record(agent: str, session: str, state: str, project: str | None = None,
         "state": state,
         "project": project,
         "ts": now,
+        "pid": pid,
     }
     _atomic_write(_session_path(agent, session), json.dumps(payload))
+
+
+def process_alive(pid: object) -> bool:
+    """Best-effort liveness check for a recorded session's agent process.
+
+    Only os.kill(pid, 0) is available without a psutil dependency, so this is
+    POSIX-only; on Windows (or any lookup error other than "no such process")
+    liveness is unknown and we assume the process is alive rather than risk
+    clearing a session that is actually still running.
+    """
+    if not isinstance(pid, int) or sys.platform == "win32":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _read_state_file(path: Path) -> dict | None:

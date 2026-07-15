@@ -33,10 +33,10 @@ PRIORITY = [State.IDLE, State.WORKING, State.DONE, State.ERROR, State.BLOCKED]
 
 # Solid RGB per state. None means "off".
 COLORS: dict[str, list | None] = {
-    State.WORKING: [0, 200, 60],   # green
-    State.BLOCKED: [220, 38, 38],  # red (needs you now)
-    State.DONE: [0, 90, 255],      # blue
-    State.ERROR: [147, 51, 234],   # violet (manual failure, distinct from blocked)
+    State.WORKING: [0, 180, 255],  # blue
+    State.BLOCKED: [255, 140, 0],  # amber (needs you now)
+    State.DONE: [0, 250, 0],       # green
+    State.ERROR: [255, 0, 0],      # red (manual failure, distinct from blocked)
     State.IDLE: None,              # off
 }
 
@@ -49,6 +49,11 @@ COLORS: dict[str, list | None] = {
 # long backstop instead, cleared sooner when you act (state changes), when
 # SessionEnd fires, or by a manual clear; the backstop only self-cleans a
 # hard-crashed session that left no final event.
+#
+# These TTLs are now a fallback, not the primary defense against orphaned
+# sessions: store.process_alive() drops a session the moment its recorded
+# pid is gone, so a closed terminal or killed process clears immediately
+# instead of pinning the aggregate light for the rest of the TTL window.
 WORKING_TTL_SECONDS = store.DEFAULT_TTL_SECONDS  # 600 (10 min): silent working is stale
 DONE_TTL_SECONDS = 90.0                          # transient "your move" pulse
 BLOCKED_TTL_SECONDS = 8 * 60 * 60.0              # 28800 (8 h): needs-you spans a workday
@@ -95,6 +100,8 @@ def resolve_color(ttl: float = _LOAD_HORIZON_SECONDS,
         st = normalize(d.get("state", State.IDLE))
         if _expired(st, d.get("ts", 0), now):
             continue
+        if not store.process_alive(d.get("pid")):
+            continue
         states.append(st)
     state = aggregate(states)
     return state, COLORS[state]
@@ -111,6 +118,8 @@ def resolve_per_session(ttl: float = _LOAD_HORIZON_SECONDS,
             st = State.IDLE
         ts = d.get("ts", 0)
         if _expired(st, ts, now):
+            continue
+        if not store.process_alive(d.get("pid")):
             continue
         rows.append({
             "agent": d.get("agent", "?"),
