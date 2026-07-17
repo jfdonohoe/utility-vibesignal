@@ -318,11 +318,12 @@ def test_agent_hooks_spec_claude_shape():
                          "Stop", "StopFailure", "SessionEnd"}
     # PostToolUse fires on every tool (matcher "*").
     assert spec["PostToolUse"][0]["matcher"] == "*"
-    # Notification is split into the two matchers, blocked vs done.
+    # Both Notification matchers mean "needs you now": a permission prompt, or
+    # Claude sitting idle waiting on you. Both map to blocked, not done.
     by_matcher = {e["matcher"]: e["hooks"][0]["command"] for e in spec["Notification"]}
     assert set(by_matcher) == {"permission_prompt", "idle_prompt"}
     assert "--state blocked" in by_matcher["permission_prompt"]
-    assert "--state done" in by_matcher["idle_prompt"]
+    assert "--state blocked" in by_matcher["idle_prompt"]
     # Every command is absolute-path-pinned and agent-tagged.
     cmds = _all_commands(spec)
     assert all(c.startswith("/env/bin/vibesignal ") for c in cmds)

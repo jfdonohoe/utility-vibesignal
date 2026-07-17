@@ -38,6 +38,47 @@ def _default_stdin_timeout() -> float:
 
 STDIN_TIMEOUT_SECONDS = _default_stdin_timeout()
 
+# Stop/StopFailure fire "done" whenever a turn ends, whether the agent actually
+# finished or just called a tool that pauses for human input. Ending on one of
+# these means it's waiting on you, not done -- report that as blocked instead.
+_STOP_WAIT_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
+
+
+def _last_transcript_line(path: str, tail_bytes: int = 65536) -> str | None:
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - tail_bytes))
+            data = f.read()
+    except OSError:
+        return None
+    lines = [ln for ln in data.split(b"\n") if ln.strip()]
+    if not lines:
+        return None
+    return lines[-1].decode("utf-8", errors="replace")
+
+
+def _stop_is_waiting_on_user(hook: dict) -> bool:
+    transcript_path = hook.get("transcript_path")
+    if not transcript_path:
+        return False
+    line = _last_transcript_line(transcript_path)
+    if not line:
+        return False
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    if entry.get("type") != "assistant":
+        return False
+    content = (entry.get("message") or {}).get("content") or []
+    return any(
+        isinstance(block, dict)
+        and block.get("type") == "tool_use"
+        and block.get("name") in _STOP_WAIT_TOOLS
+        for block in content
+    )
+
 
 def _read_hook_stdin(timeout: float = STDIN_TIMEOUT_SECONDS) -> dict:
     if sys.stdin is None or sys.stdin.isatty():
@@ -88,11 +129,14 @@ def cmd_event(args) -> int:
         session = args.session or hook.get("session_id") or "default"
         cwd = str(hook.get("cwd") or os.getcwd())
         project = args.project or os.path.basename(cwd.rstrip("/\\")) or None
+        record_state = args.state
+        if record_state == State.DONE and _stop_is_waiting_on_user(hook):
+            record_state = State.BLOCKED
         with lock.file_lock(store.lock_path()):
             # getppid(): hooks are spawned as a direct child of the long-lived
             # agent process, not a throwaway wrapper shell, so the parent pid
             # is a valid liveness handle for the whole session's lifetime.
-            store.record(agent=args.agent, session=session, state=args.state,
+            store.record(agent=args.agent, session=session, state=record_state,
                          project=project, pid=os.getppid())
             state, color = _apply_light()
         # --quiet keeps stdout empty for hosts that parse hook stdout as JSON

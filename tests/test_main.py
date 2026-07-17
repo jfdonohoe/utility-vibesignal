@@ -93,6 +93,94 @@ def test_event_accepts_blocked_done_and_alias(tmp_path):
         assert proc.returncode == 0, f"state {state} rejected"
 
 
+def _write_transcript(tmp_path, last_entry):
+    import json as _json
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(
+        '{"type": "user", "message": {"role": "user", "content": "hi"}}\n'
+        + _json.dumps(last_entry) + "\n"
+    )
+    return str(path)
+
+
+def test_stop_on_ask_user_question_reports_blocked_not_done(tmp_path):
+    # Stop fires "done" whether the agent finished or just called
+    # AskUserQuestion and is waiting on the human -- the transcript's last
+    # tool call is the only signal that tells the two apart.
+    transcript = _write_transcript(tmp_path, {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "AskUserQuestion",
+             "input": {"question": "which env?"}},
+        ]},
+    })
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude", "--state", "done"],
+        input=f'{{"session_id":"s1","cwd":"/p","transcript_path":"{transcript}"}}',
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    status = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "status"],
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert "claude/s1: blocked" in status.stdout
+
+
+def test_stop_on_exit_plan_mode_reports_blocked_not_done(tmp_path):
+    transcript = _write_transcript(tmp_path, {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "ExitPlanMode", "input": {"plan": "..."}},
+        ]},
+    })
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude", "--state", "done"],
+        input=f'{{"session_id":"s1","cwd":"/p","transcript_path":"{transcript}"}}',
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    status = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "status"],
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert "claude/s1: blocked" in status.stdout
+
+
+def test_stop_on_normal_reply_still_reports_done(tmp_path):
+    transcript = _write_transcript(tmp_path, {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "all done"}]},
+    })
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude", "--state", "done"],
+        input=f'{{"session_id":"s1","cwd":"/p","transcript_path":"{transcript}"}}',
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    status = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "status"],
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert "claude/s1: done" in status.stdout
+
+
+def test_stop_with_missing_transcript_path_still_reports_done(tmp_path):
+    # No transcript_path in the hook payload (e.g. an older host) must fall back
+    # to the requested state rather than erroring.
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude", "--state", "done"],
+        input='{"session_id":"s1","cwd":"/p"}',
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    status = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "status"],
+        capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert "claude/s1: done" in status.stdout
+
+
 def test_event_quiet_suppresses_stdout(tmp_path):
     # Codex parses a hook's stdout as JSON, so --quiet must yield EMPTY stdout
     # while still recording state. Without it, the status line prints.

@@ -492,7 +492,7 @@ def agent_hooks_spec(args: list[str], agent: str) -> dict:
             {"matcher": "permission_prompt",
              "hooks": [cmd("event", "--agent", agent, "--state", "blocked")]},
             {"matcher": "idle_prompt",
-             "hooks": [cmd("event", "--agent", agent, "--state", "done")]},
+             "hooks": [cmd("event", "--agent", agent, "--state", "blocked")]},
         ],
         "Stop": [
             {"hooks": [cmd("event", "--agent", agent, "--state", "done")]},
