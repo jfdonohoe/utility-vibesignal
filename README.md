@@ -135,7 +135,7 @@ flowchart LR
     S --> W["Floating widget"]
 ```
 
-Each hook fires `vibesignal event`, which writes one JSON file per (agent, session), reads every active file, resolves the aggregate state by priority (`blocked > error > done > working > idle`), and updates the USB light if the color changed. Sessions that stop emitting events drop off after their per-state TTL.
+Each hook fires `vibesignal event`, which writes one JSON file per (agent, session), reads every active file, resolves the aggregate state by priority (`blocked > error > working > done > idle`), and updates the USB light if the color changed. Sessions that stop emitting events drop off after their per-state TTL.
 
 Concurrent hooks stay honest two ways. The record-resolve-apply cycle holds a short cross-process lock, so two sessions firing at once cannot leave the light on a lower-priority color (a finishing `working` hook overwriting a fresh `blocked` event from another session). Every state file is written atomically (`tempfile` plus `os.replace`), so a reader never sees a half-written file. The lock is bounded: if it cannot be taken quickly it gives up and proceeds, because never blocking the agent's hook matters more than perfect ordering under rare contention.
 
@@ -143,13 +143,13 @@ Concurrent hooks stay honest two ways. The record-resolve-apply cycle holds a sh
 
 | State | Light | Set by (Claude Code hook) | Meaning |
 |-------|-------|---------------------------|---------|
-| `blocked` | Amber, solid | `Notification` (`permission_prompt`) | An agent needs you now |
-| `done` | Blue, solid | `Stop`, `StopFailure`, `Notification` (`idle_prompt`) | An agent finished its turn; your move |
-| `working` | Green, solid | `UserPromptSubmit`, `PostToolUse` | An agent is busy, do not interrupt |
+| `blocked` | Amber, solid | `Notification` (`permission_prompt`); `Stop`/`StopFailure` when the transcript ends on `AskUserQuestion`/`ExitPlanMode` | An agent needs you now |
+| `done` | Green, solid | `Stop`, `StopFailure` (when not ending on a waiting-for-you tool call) | An agent finished its turn; your move |
+| `working` | Blue, solid | `UserPromptSubmit`, `PostToolUse`, `Notification` (`idle_prompt`) | An agent is busy, do not interrupt |
 | `error` | Red, solid | Manual only | A failure |
 | `idle` | Off | TTL timeout, done-fade | Nothing needs you |
 
-Aggregate priority across active sessions: `blocked > error > done > working > idle`. If any one agent is waiting on you, the light is amber, so the signal you care about most is never hidden.
+Aggregate priority across active sessions: `blocked > error > working > done > idle`. If any one agent is waiting on you, the light is amber, so the signal you care about most is never hidden. `idle_prompt` fires whenever the CLI has been quiet for a stretch, not only when an agent is genuinely waiting on a human answer, so it's treated as still-working rather than blocked -- amber stays reserved for real "needs you" moments.
 
 ## Three Renderers
 
@@ -210,7 +210,7 @@ vibesignal install-hooks
 
 This merges the six hook entries into `~/.claude/settings.json` under `"hooks"`, preserves any hooks you already have, and **pins the absolute path** of the `vibesignal` you ran it with. Pinning is the whole point: Claude Code runs each hook command in a short-lived shell whose `PATH` need not include the environment vibesignal is installed in (a conda env on macOS is the classic trap), so a bare `vibesignal` would fail with `command not found` and nothing would ever record. Re-run after switching env to re-pin; `vibesignal uninstall-hooks` removes them again.
 
-To wire it by hand instead, merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"` and **replace the bare `vibesignal` with its absolute path** (`which vibesignal`). The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `done`. `SessionEnd` clears the session at once instead of waiting out the TTL. The snippet's commands already pass `--quiet` so hook stdout stays empty for strict parsers.
+To wire it by hand instead, merge [`hooks/claude-settings.snippet.json`](hooks/claude-settings.snippet.json) into `~/.claude/settings.json` under `"hooks"` and **replace the bare `vibesignal` with its absolute path** (`which vibesignal`). The keys (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) do not collide with any default hooks. `Notification` is split by matcher: `permission_prompt` sets `blocked`, `idle_prompt` sets `working` (it fires on any quiet stretch, not only when an agent is genuinely waiting on you). `SessionEnd` clears the session at once instead of waiting out the TTL. The snippet's commands already pass `--quiet` so hook stdout stays empty for strict parsers.
 
 The `vibesignal` command reads the session id from the hook's stdin JSON, so one light tracks every concurrent session.
 

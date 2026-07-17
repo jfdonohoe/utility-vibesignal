@@ -29,14 +29,15 @@ def _commands(tree):
     return found
 
 
-def test_claude_snippet_notification_splits_blocked_and_done():
-    # A real permission prompt is blocked; an idle prompt (turn ended, waiting on
-    # you) is done. The old flat "Notification -> blocked" caused false blocked.
+def test_claude_snippet_notification_splits_blocked_and_working():
+    # A real permission prompt is blocked. idle_prompt fires on any quiet stretch
+    # (not only when genuinely waiting on a human answer), so it maps to working,
+    # not blocked -- amber stays reserved for real "needs you" cases.
     notif = _claude_snippet()["hooks"]["Notification"]
     by_matcher = {e.get("matcher"): json.dumps(e["hooks"]) for e in notif}
     assert "blocked" in by_matcher["permission_prompt"]
-    assert "done" not in by_matcher["permission_prompt"]
-    assert "done" in by_matcher["idle_prompt"]
+    assert "working" not in by_matcher["permission_prompt"]
+    assert "working" in by_matcher["idle_prompt"]
     assert "blocked" not in by_matcher["idle_prompt"]
 
 

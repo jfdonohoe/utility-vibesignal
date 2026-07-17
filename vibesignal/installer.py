@@ -491,8 +491,12 @@ def agent_hooks_spec(args: list[str], agent: str) -> dict:
         "Notification": [
             {"matcher": "permission_prompt",
              "hooks": [cmd("event", "--agent", agent, "--state", "blocked")]},
+            # idle_prompt fires whenever the CLI has been quiet for a stretch (e.g.
+            # a long compose/reasoning gap between tool calls), not only when the
+            # agent is genuinely waiting on you -- treat it as still-working (blue),
+            # not blocked (amber), so amber stays reserved for real "needs you" cases.
             {"matcher": "idle_prompt",
-             "hooks": [cmd("event", "--agent", agent, "--state", "blocked")]},
+             "hooks": [cmd("event", "--agent", agent, "--state", "working")]},
         ],
         "Stop": [
             {"hooks": [cmd("event", "--agent", agent, "--state", "done")]},

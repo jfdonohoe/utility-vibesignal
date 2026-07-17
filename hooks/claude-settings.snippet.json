@@ -8,7 +8,7 @@
     ],
     "Notification": [
       { "matcher": "permission_prompt", "hooks": [ { "type": "command", "command": "vibesignal event --agent claude --state blocked --quiet" } ] },
-      { "matcher": "idle_prompt", "hooks": [ { "type": "command", "command": "vibesignal event --agent claude --state done --quiet" } ] }
+      { "matcher": "idle_prompt", "hooks": [ { "type": "command", "command": "vibesignal event --agent claude --state working --quiet" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "vibesignal event --agent claude --state done --quiet" } ] }
