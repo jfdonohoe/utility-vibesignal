@@ -4,24 +4,34 @@
 
 **A physical USB status light for AI coding agents (Claude Code, Codex)**
 
-[![PyPI](https://img.shields.io/pypi/v/vibesignal.svg)](https://pypi.org/project/vibesignal/)
+[![Fork of](https://img.shields.io/badge/fork%20of-yzhao062%2Fvibesignal-lightgrey.svg)](https://github.com/yzhao062/vibesignal)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#whats-next)
-[![GitHub Stars](https://img.shields.io/github/stars/yzhao062/vibesignal?style=social)](https://github.com/yzhao062/vibesignal)
 
-[Install](#install) · [Quickstart](#quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [What's Next](#whats-next)
+[Install](#install) · [Quickstart](#quickstart) · [How It Works](#how-it-works) · [Three Renderers](#three-renderers) · [Configure Agents](#configure-agents) · [About This Fork](#about-this-fork) · [What's Next](#whats-next)
 
 </div>
 
 > [!NOTE]
-> **The light is the point.** When Claude Code or Codex needs your reply, a USB light on your desk turns amber. When an agent finishes its turn, it turns blue. While an agent is working, green. A light on the desk is harder to miss than one more notification in the corner of a screen you are already ignoring.
+> **The light is the point.** When Claude Code or Codex needs your reply, a USB light on your desk turns amber. When an agent finishes its turn, it turns green. While an agent is working, blue. A light on the desk is harder to miss than one more notification in the corner of a screen you are already ignoring.
 
 No light on your desk yet? The same signal renders on screen, so you can run VibeSignal today and add the hardware later. The always-on-top widget below stays calm grey while agents work, and turns red the moment a session blocks for your input.
 
 <p align="center">
 <img src="https://raw.githubusercontent.com/yzhao062/vibesignal/main/docs/widget-mockup.png" alt="The VibeSignal widget mirrors the desk light on screen: a calm grey panel while agents work, turning red when a session blocks for your input" width="760">
 </p>
+
+## About This Fork
+
+This repo ([jfdonohoe/utility-vibesignal](https://github.com/jfdonohoe/utility-vibesignal)) is a personal fork of [yzhao062/vibesignal](https://github.com/yzhao062/vibesignal), kept for my own single-machine use rather than public distribution. Two things are different here:
+
+- **No CI, no PyPI publishing.** This is a git-backed personal setup on one Mac, not a package meant for other people or platforms to install. The GitHub Actions workflows (cross-platform test matrix, installer smoke tests, tag-triggered PyPI release) that exist upstream have been removed; a push to `main` is the whole release process. Everything elsewhere in this README about `pip install`, Homebrew, and cross-platform CI describes the **upstream** project, not this fork.
+- **Two state-mapping fixes not in upstream, both found from real false signals on the desk light:**
+  - `Stop` / `StopFailure` inspect the transcript before reporting `done`: if the agent's last action was `AskUserQuestion` or `ExitPlanMode`, the light now reports `blocked` (amber) instead. Upstream reports `done` (green) unconditionally on turn-end, which reads as "finished" even when the agent actually stopped to ask a question and is waiting on you.
+  - `Notification` (`idle_prompt`) maps to `working` (blue), not `done`. Upstream maps it to `done`; an earlier pass here tried `blocked` (amber) instead, but `idle_prompt` turned out to fire on any quiet stretch — including ordinary compose/reasoning gaps mid-turn — not only when an agent is genuinely waiting on a human answer. Amber is reserved for `permission_prompt` and the `Stop`-transcript case above, the two signals that actually mean "needs you now."
+
+See the [State Table](#state-table) below and the git history of `vibesignal/installer.py` / `vibesignal/__main__.py` for the exact behavior.
 
 ## What You Get
 
