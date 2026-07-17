@@ -49,7 +49,7 @@ def render(rows: list[dict], now: float, color: bool = True) -> str:
         glyph = _GLYPH.get(st, " ")
         project = str(r.get("project") or "?")[:16]
         agent = str(r.get("agent") or "?")[:7]
-        age = "--" if st == "working" else _fmt_age(now - r.get("ts", now))
+        age = _fmt_age(now - r.get("ts", now))
         body = f"{glyph} {project:<16} {agent:<7} {glyph} {st:<7} {age}"
         lines.append(paint(body, st))
     return "\n".join(lines)

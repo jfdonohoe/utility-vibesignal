@@ -19,13 +19,26 @@ def test_render_lists_sessions_blocked_first():
     assert out.index("aegis") < out.index("random")
 
 
-def test_render_age_only_for_non_working():
+def test_render_shows_age_for_blocked():
     rows = [
         {"agent": "claude", "project": "p", "session": "s",
          "state": "blocked", "color": [255, 170, 0], "ts": 1000.0},
     ]
     out = panel.render(rows, now=1072.0, color=False)
     assert "1m12s" in out
+
+
+def test_render_shows_age_for_working_too():
+    # A working session can sit quiet for a long stretch (one slow tool call, no
+    # PostToolUse yet); showing its real age -- not a blanked "--" -- is what lets
+    # you tell "just started" apart from "about to hit the working TTL".
+    rows = [
+        {"agent": "claude", "project": "p", "session": "s",
+         "state": "working", "color": [0, 180, 255], "ts": 1000.0},
+    ]
+    out = panel.render(rows, now=1072.0, color=False)
+    assert "1m12s" in out
+    assert "--" not in out
 
 
 def test_fmt_age():

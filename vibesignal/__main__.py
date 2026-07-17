@@ -21,8 +21,10 @@ import os
 import queue
 import sys
 import threading
+import time
 
 from . import light, lock, store
+from .panel import _fmt_age
 from .resolve import State, resolve_color, resolve_per_session
 
 
@@ -154,9 +156,11 @@ def cmd_status(args) -> int:
     # the store directly would hide a long-blocked session the light still shows.
     rows = resolve_per_session()
     state, color = resolve_color()
+    now = time.time()
     print(f"aggregate: {state}  color: {color}  (last applied: {store.get_last_color()})")
     for r in rows:
-        print(f"  {r['agent']}/{r['session']}: {r['state']} project={r['project']}")
+        age = _fmt_age(now - r.get("ts", now))
+        print(f"  {r['agent']}/{r['session']}: {r['state']} project={r['project']} for={age}")
     if not rows:
         print("  (no active sessions)")
     return 0
