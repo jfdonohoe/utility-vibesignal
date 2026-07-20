@@ -117,6 +117,10 @@ def _read_hook_stdin(timeout: float = STDIN_TIMEOUT_SECONDS) -> dict:
 
 def _apply_light() -> tuple[str, list | None]:
     state, color = resolve_color()
+    if store.is_paused():
+        # State bookkeeping still happens (status stays accurate); only the
+        # hardware write is suppressed, so the light stays dark until resume.
+        return state, color
     if color != store.get_last_color():
         # Cache the color only after the device accepts it, so a no-device run
         # does not poison the cache and suppress the first real write later.
@@ -182,6 +186,24 @@ def cmd_off(args) -> int:
         if light.set_color(None):
             store.set_last_color(None)
     print("[vibesignal] off")
+    return 0
+
+
+def cmd_pause(args) -> int:
+    store.set_paused(True)
+    with lock.file_lock(store.lock_path()):
+        # Force the device off now rather than waiting for the next hook event.
+        if light.set_color(None):
+            store.set_last_color(None)
+    print("[vibesignal] paused (light stays off until `vibesignal resume`)")
+    return 0
+
+
+def cmd_resume(args) -> int:
+    store.set_paused(False)
+    with lock.file_lock(store.lock_path()):
+        state, color = _apply_light()
+    print(f"[vibesignal] resumed: {state} {color}")
     return 0
 
 
@@ -304,6 +326,12 @@ def main(argv: list | None = None) -> int:
 
     p_off = sub.add_parser("off", help="clear all sessions and turn the light off")
     p_off.set_defaults(func=cmd_off)
+
+    p_pause = sub.add_parser("pause", help="suppress the light until `resume` (survives further hook events)")
+    p_pause.set_defaults(func=cmd_pause)
+
+    p_resume = sub.add_parser("resume", help="stop suppressing the light and re-apply the current state")
+    p_resume.set_defaults(func=cmd_resume)
 
     p_end = sub.add_parser("end", help="clear one ended session (id from hook stdin)")
     p_end.add_argument("--agent", required=True, help="agent name, e.g. claude")

@@ -44,6 +44,18 @@ def test_last_color_roundtrip(tmp_path, monkeypatch):
     assert store.get_last_color() is None
 
 
+def test_pause_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
+    assert store.is_paused() is False
+    store.set_paused(True)
+    assert store.is_paused() is True
+    store.set_paused(True)  # idempotent
+    assert store.is_paused() is True
+    store.set_paused(False)
+    assert store.is_paused() is False
+    store.set_paused(False)  # idempotent
+
+
 def test_session_id_with_path_separators_is_preserved(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
     store.record("claude", "a/b\\c", "working", now=1000.0)

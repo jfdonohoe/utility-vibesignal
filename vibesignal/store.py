@@ -156,3 +156,20 @@ def get_last_color() -> list | None:
 
 def set_last_color(color: list | None) -> None:
     _atomic_write(_last_color_path(), json.dumps({"color": color}))
+
+
+def _paused_path() -> Path:
+    return base_dir() / "paused"
+
+
+def is_paused() -> bool:
+    return _paused_path().exists()
+
+
+def set_paused(value: bool) -> None:
+    path = _paused_path()
+    if value:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    else:
+        path.unlink(missing_ok=True)

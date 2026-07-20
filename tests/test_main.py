@@ -75,6 +75,49 @@ def test_apply_light_caches_on_success(tmp_path, monkeypatch):
     assert store.get_last_color() == [0, 180, 255]
 
 
+def test_apply_light_paused_skips_device_but_still_resolves(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(cli.light, "set_color", lambda rgb: calls.append(rgb) or True)
+    store.record("claude", "s1", "working")
+    store.set_paused(True)
+    state, color = cli._apply_light()
+    assert (state, color) == ("working", [0, 180, 255])  # status still resolves correctly
+    assert calls == []                                    # but the device was never touched
+    assert store.get_last_color() is None
+
+
+def test_pause_forces_device_off_immediately(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
+    monkeypatch.setattr(cli.light, "set_color", lambda rgb: True)
+    store.record("claude", "s1", "working")
+    cli.cmd_pause(None)
+    assert store.is_paused() is True
+    assert store.get_last_color() is None
+
+
+def test_resume_reapplies_current_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
+    monkeypatch.setattr(cli.light, "set_color", lambda rgb: True)
+    store.record("claude", "s1", "working")
+    store.set_paused(True)
+    cli.cmd_resume(None)
+    assert store.is_paused() is False
+    assert store.get_last_color() == [0, 180, 255]
+
+
+def test_event_while_paused_does_not_reach_device(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
+    store.set_paused(True)
+    proc = subprocess.run(
+        [sys.executable, "-m", "vibesignal", "event", "--agent", "claude",
+         "--state", "working", "--session", "s"],
+        input="{}", capture_output=True, text=True, timeout=10, env=_child_env(tmp_path),
+    )
+    assert proc.returncode == 0
+    assert store.get_last_color() is None
+
+
 def test_off_does_not_cache_on_failed_write(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
     store.set_last_color([255, 170, 0])                            # device believed amber

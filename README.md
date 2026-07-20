@@ -257,6 +257,8 @@ vibesignal event --agent claude --state working
 vibesignal event --agent claude --state working --quiet  # hook-safe, no stdout
 vibesignal status        # active sessions and the resolved color
 vibesignal off           # clear all sessions
+vibesignal pause         # force the light off; further hook events resolve state but skip the device
+vibesignal resume        # stop suppressing and re-apply the current state immediately
 ```
 
 With no light connected, `event` records state and prints the color it would set, then exits cleanly. Hooks never fail when the light is missing or unplugged.
