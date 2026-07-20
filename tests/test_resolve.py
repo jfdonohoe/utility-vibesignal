@@ -31,8 +31,9 @@ def test_blocked_beats_error():
     assert aggregate([State.ERROR, State.BLOCKED]) == State.BLOCKED
 
 
-def test_done_beats_working():
-    assert aggregate([State.WORKING, State.DONE]) == State.DONE
+def test_working_beats_done():
+    # A still-running session must not be masked by another session's "done" pulse.
+    assert aggregate([State.WORKING, State.DONE]) == State.WORKING
 
 
 def test_needs_input_alias_aggregates_as_blocked():
@@ -61,7 +62,7 @@ def test_per_session_orders_blocked_first(tmp_path, monkeypatch):
     store.record("codex", "s2", "blocked", project="p2", now=1001.0)
     store.record("claude", "s3", "done", project="p3", now=1002.0)
     rows = resolve_per_session(ttl=600, now=1050.0)  # within the done window
-    assert [r["state"] for r in rows] == ["blocked", "done", "working"]
+    assert [r["state"] for r in rows] == ["blocked", "working", "done"]
     assert rows[0]["project"] == "p2"
     assert rows[0]["color"] == [255, 140, 0]
 

@@ -29,7 +29,9 @@ def normalize(state: object) -> str:
 
 
 # Higher index = higher priority when several sessions are active at once.
-PRIORITY = [State.IDLE, State.WORKING, State.DONE, State.ERROR, State.BLOCKED]
+# WORKING outranks DONE: if any session is still running, the light should not
+# flash "done" green just because a different session finished.
+PRIORITY = [State.IDLE, State.DONE, State.WORKING, State.ERROR, State.BLOCKED]
 
 # Solid RGB per state. None means "off".
 COLORS: dict[str, list | None] = {
