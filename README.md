@@ -269,10 +269,16 @@ There is no purpose-built "AI agent light" product. The proven path is a commerc
 
 | Light | Form | Notes |
 |---|---|---|
+| **[ThingM Blink(1) mk3](https://blink1.thingm.com/)** ✅ used in this setup | Tiny, fully open, USB-A | Long-standing developer favorite; sold as `BLINK1MK3` |
 | **Luxafor Flag 2** | Magnet on a monitor edge, USB-C | Eye-level spot, holds its color |
-| **blink(1) mk2** | Tiny, fully open | Long-standing developer favorite |
 
 Both are on Amazon US and supported by `busylight-core`. Check the live price before buying.
+
+The gif below shows the Blink(1) mk3 driven live by the Claude Code state hooks in this repo — amber while a session is blocked waiting on input, green when a turn finishes, blue while an agent is working:
+
+<p align="center">
+<img src="docs/led_480.gif" alt="ThingM Blink(1) mk3 cycling between amber (blocked), green (done), and blue (working) as Claude Code state hooks fire" width="480">
+</p>
 
 <details>
 <summary><b>Why Solid Colors, Not Blinking</b></summary>
