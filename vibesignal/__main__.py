@@ -115,18 +115,25 @@ def _read_hook_stdin(timeout: float = STDIN_TIMEOUT_SECONDS) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _apply_light() -> tuple[str, list | None]:
+def _apply_light() -> tuple[str, list | None, bool]:
+    """Returns (state, color, write_failed). write_failed is True only when a
+    hardware write was actually attempted and light.set_color() reported
+    failure — callers use this to tell "applied" from "silently dropped",
+    since light.set_color() never raises and a stale cache would otherwise
+    mask a dead write behind a status line that looks identical to success."""
     state, color = resolve_color()
     if store.is_paused():
         # State bookkeeping still happens (status stays accurate); only the
         # hardware write is suppressed, so the light stays dark until resume.
-        return state, color
-    if color != store.get_last_color():
-        # Cache the color only after the device accepts it, so a no-device run
-        # does not poison the cache and suppress the first real write later.
-        if light.set_color(color):
-            store.set_last_color(color)
-    return state, color
+        return state, color, False
+    if color == store.get_last_color():
+        return state, color, False
+    # Cache the color only after the device accepts it, so a no-device run
+    # does not poison the cache and suppress the first real write later.
+    if light.set_color(color):
+        store.set_last_color(color)
+        return state, color, False
+    return state, color, True
 
 
 def cmd_event(args) -> int:
@@ -144,11 +151,14 @@ def cmd_event(args) -> int:
             # is a valid liveness handle for the whole session's lifetime.
             store.record(agent=args.agent, session=session, state=record_state,
                          project=project, pid=os.getppid())
-            state, color = _apply_light()
+            state, color, write_failed = _apply_light()
         # --quiet keeps stdout empty for hosts that parse hook stdout as JSON
         # (Codex rejects a plain status line from a PostToolUse hook).
         if not args.quiet:
-            print(f"[vibesignal] {args.agent}/{session}: {args.state} -> {state} {color}")
+            msg = f"[vibesignal] {args.agent}/{session}: {args.state} -> {state} {color}"
+            if write_failed:
+                msg += " (device write failed, will retry)"
+            print(msg)
     except Exception as exc:  # a VibeSignal bug must never break the agent
         print(f"[vibesignal] non-fatal: {exc}", file=sys.stderr)
     return 0
@@ -173,8 +183,11 @@ def cmd_status(args) -> int:
 def cmd_clear(args) -> int:
     with lock.file_lock(store.lock_path()):
         store.clear(agent=args.agent, session=args.session)
-        _apply_light()
-    print("[vibesignal] cleared")
+        _, _, write_failed = _apply_light()
+    msg = "[vibesignal] cleared"
+    if write_failed:
+        msg += " (device write failed, will retry)"
+    print(msg)
     return 0
 
 
@@ -202,8 +215,11 @@ def cmd_pause(args) -> int:
 def cmd_resume(args) -> int:
     store.set_paused(False)
     with lock.file_lock(store.lock_path()):
-        state, color = _apply_light()
-    print(f"[vibesignal] resumed: {state} {color}")
+        state, color, write_failed = _apply_light()
+    msg = f"[vibesignal] resumed: {state} {color}"
+    if write_failed:
+        msg += " (device write failed, will retry)"
+    print(msg)
     return 0
 
 

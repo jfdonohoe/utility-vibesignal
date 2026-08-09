@@ -62,17 +62,19 @@ def test_apply_light_does_not_cache_on_failed_write(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.light, "set_color", lambda rgb: False)  # simulate no device
     store.record("claude", "s1", "working")
     assert store.get_last_color() is None
-    state, color = cli._apply_light()
+    state, color, write_failed = cli._apply_light()
     assert color == [0, 180, 255]            # working -> blue
     assert store.get_last_color() is None   # not cached, because the write failed
+    assert write_failed is True
 
 
 def test_apply_light_caches_on_success(tmp_path, monkeypatch):
     monkeypatch.setenv("VIBECODING_SIGNAL_DIR", str(tmp_path))
     monkeypatch.setattr(cli.light, "set_color", lambda rgb: True)  # simulate a device
     store.record("claude", "s1", "working")
-    cli._apply_light()
+    _, _, write_failed = cli._apply_light()
     assert store.get_last_color() == [0, 180, 255]
+    assert write_failed is False
 
 
 def test_apply_light_paused_skips_device_but_still_resolves(tmp_path, monkeypatch):
@@ -81,10 +83,11 @@ def test_apply_light_paused_skips_device_but_still_resolves(tmp_path, monkeypatc
     monkeypatch.setattr(cli.light, "set_color", lambda rgb: calls.append(rgb) or True)
     store.record("claude", "s1", "working")
     store.set_paused(True)
-    state, color = cli._apply_light()
+    state, color, write_failed = cli._apply_light()
     assert (state, color) == ("working", [0, 180, 255])  # status still resolves correctly
     assert calls == []                                    # but the device was never touched
     assert store.get_last_color() is None
+    assert write_failed is False                          # paused is a deliberate skip, not a failure
 
 
 def test_pause_forces_device_off_immediately(tmp_path, monkeypatch):
